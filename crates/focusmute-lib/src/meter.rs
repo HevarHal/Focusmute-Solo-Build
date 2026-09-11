@@ -44,10 +44,11 @@ pub fn read_meters(device: &impl ScarlettDevice, count: u16) -> Result<Vec<u32>>
             resp.len()
         )));
     }
-    Ok(resp[RESPONSE_HEADER..]
-        .chunks_exact(4)
+    let (values, _partial) = resp[RESPONSE_HEADER..].as_chunks::<4>();
+    Ok(values
+        .iter()
         .take(count as usize)
-        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .map(|v| u32::from_le_bytes(*v))
         .collect())
 }
 
