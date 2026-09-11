@@ -272,7 +272,7 @@ impl eframe::App for SettingsApp {
         let form_snap = self.form_snapshot();
 
         let mut content_bottom = 0.0_f32;
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             // ── Mute Indicator section ──
             section_frame(ui, "Mute Indicator", |ui| {
                 egui::Grid::new("mute_indicator_grid")
