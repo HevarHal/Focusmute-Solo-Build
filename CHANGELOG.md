@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Dependency refresh: GUI stack on egui/eframe 0.36, `toml` 1.0, plus `flate2` and `log` patches. MSRV is now rustc 1.95
+- The reverse-sync setting is labeled "Let FocusMute mute/unmute the meeting"; it covers Microsoft Teams as well as Google Meet
+
+### Fixed
+
+- `webbrowser`, reached through the settings dialog's GUI stack, could have extra browser flags injected into it through the Unix `BROWSER` environment variable (RUSTSEC-2026-0257)
+
 ## [0.10.0] - 2026-08-11
 
 ### Added
