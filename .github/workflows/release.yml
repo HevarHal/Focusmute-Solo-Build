@@ -12,7 +12,31 @@ permissions:
   contents: write
 
 jobs:
+  # The artifact names and the version the binaries report both come from
+  # Cargo.toml, not from the tag, so a forgotten version bump publishes a
+  # release whose assets disagree with it while every other gate stays green.
+  version-check:
+    name: Tag matches crate version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Compare tag against both crate versions
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          status=0
+          for manifest in crates/focusmute/Cargo.toml crates/focusmute-lib/Cargo.toml; do
+            crate=$(grep -m1 '^version = ' "$manifest" | cut -d'"' -f2)
+            echo "$manifest: $crate (tag: $tag)"
+            if [ "$crate" != "$tag" ]; then
+              echo "::error file=$manifest::version $crate does not match tag $GITHUB_REF_NAME"
+              status=1
+            fi
+          done
+          exit $status
+
   check:
+    needs: [version-check]
     uses: ./.github/workflows/check.yml
 
   release-windows:
