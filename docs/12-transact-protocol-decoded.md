@@ -92,7 +92,7 @@ Output (96 bytes):
   Byte 92-95: zeros
 ```
 
-**Confirmed during prototyping**: GET_CONFIG returned `...00 50 F0 AB 85 AE FF FF...` at bytes 8-15, matching FC2's token `0050f0ab85aeffff` exactly.
+**Confirmed during prototyping**: GET_CONFIG returned a non-zero 8-byte token at bytes 8-15, matching the token FC2 sends on the same session exactly. The value is per-session and per-device, so it is not reproduced here.
 
 **Confirmed by Focusmute**: Byte 20 = 48000 (sample rate). Firmware version is NOT in GET_CONFIG — it's in the descriptor header.
 
@@ -236,7 +236,7 @@ Verified against all 18 known command pairs — no exceptions found.
 | 16 | 4 | 2417 | Firmware build number |
 | 20 | 64 | `Focusrite` | Manufacturer name (null-padded) |
 | 84 | 64 | `Scarlett 2i2 4th Gen` | Product name (null-padded) |
-| 148 | 64 | `S2G6HVK563186A` | Serial number (null-padded) |
+| 148 | 64 | `<device serial>` | Serial number (null-padded) |
 
 Useful for multi-device identification without USB descriptor enumeration.
 

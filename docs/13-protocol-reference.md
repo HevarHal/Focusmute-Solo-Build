@@ -575,8 +575,8 @@ Prop3=19,11
 The App_Env segment stores plain-text key=value pairs (newline-separated). Only ~165 bytes used of the 64 KB allocation; the rest is empty flash.
 
 ```
-serial_str=S2G6HVK563186A
-pcba_sn=Y250530057501
+serial_str=<device serial>
+pcba_sn=<PCBA serial>
 powercycles=0x0000003f
 totalsec=0x000c5470
 url_str=api.focusrite-novation.com/register?method=usb&upn=00000000000000
