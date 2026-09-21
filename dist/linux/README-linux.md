@@ -9,7 +9,7 @@ Monitors your system's default capture device mute state and reflects it on your
 |------|-------------|
 | `focusmute` | System tray app (GTK, hotkey, sound feedback, settings dialog) |
 | `focusmute-cli` | CLI tool for monitoring, diagnostics, and device control |
-| `99-focusrite.rules` | udev rule granting USB access to logged-in users |
+| `99-focusrite.rules` | udev rule granting USB access to logged-in users (or the `audio` group) |
 | `focusmute.desktop` | Desktop entry for the tray app |
 | `focusmute-cli.desktop` | Desktop entry for the CLI monitor |
 
@@ -46,6 +46,14 @@ This installs both binaries, udev rules, and desktop entries automatically.
    sudo install -m 644 99-focusrite.rules /etc/udev/rules.d/
    sudo udevadm control --reload-rules
    sudo udevadm trigger --subsystem-match=usb
+   ```
+
+   On systemd/logind systems this is all you need: `uaccess` gives the
+   physically logged-in user an ACL on the device node. Without logind, the
+   node is owned by `root:audio` with mode `0660`, so join that group once:
+
+   ```bash
+   sudo usermod -aG audio "$USER"   # log out and back in to take effect
    ```
 
 3. (Optional) Install the desktop entries:

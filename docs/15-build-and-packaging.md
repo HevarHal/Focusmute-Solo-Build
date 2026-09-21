@@ -135,14 +135,16 @@ Can be added via [cargo-generate-rpm](https://github.com/cat-in-136/cargo-genera
 
 `dist/linux/99-focusrite.rules`:
 ```
-SUBSYSTEM=="usb", ATTR{idVendor}=="1235", MODE="0666", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="1235", MODE="0660", GROUP="audio", TAG+="uaccess"
 ```
 
 - **VID `1235`**: Focusrite (covers all Scarlett, Clarett, Vocaster devices)
-- **`MODE="0666"`**: Fallback for systems without logind (e.g., minimal installs)
-- **`TAG+="uaccess"`**: Preferred mechanism on systemd/logind systems — grants access only to the physically logged-in user
+- **`TAG+="uaccess"`**: Preferred mechanism on systemd/logind systems — grants access only to the physically logged-in user, via an ACL on the device node
+- **`MODE="0660", GROUP="audio"`**: Fallback for systems without logind (e.g. minimal installs), where `uaccess` does nothing. Members of `audio` can open the device; nobody else can.
 
-Without this rule, `nusb` cannot open the USB device without root privileges.
+The node is deliberately not world-writable. This interface accepts the full TRANSACT command set, including flash reads and firmware-adjacent commands (see [13-protocol-reference.md](13-protocol-reference.md)), so write access is worth restricting even on a single-user machine.
+
+Without this rule, `nusb` cannot open the USB device without root privileges. On a non-logind system, add yourself to the group once: `sudo usermod -aG audio "$USER"` (log out and back in to take effect).
 
 ## CI/CD
 
