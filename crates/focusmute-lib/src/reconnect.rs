@@ -336,6 +336,7 @@ mod tests {
             mute_colors: vec![],
             selected_color: 0x20FF_0000,
             unselected_color: 0x88FF_FF00,
+            offsets: Default::default(),
         }
     }
 

@@ -10,6 +10,19 @@
 //! - Input halos: `max_inputs × 8 LEDs/input` (1 number indicator + 7 halo segments)
 //! - Output halo: `metering_segments - (max_inputs × 7)` segments
 //! - Buttons: remaining LEDs after all halos
+//!
+//! ## What the schema does not say
+//!
+//! The order of those three zones is an assumption, not something the schema
+//! encodes. It holds on the Scarlett 2i2 4th Gen, where LED 0 is input 1's
+//! number. It does not hold universally: on a Scarlett Solo 4th Gen four
+//! button LEDs come first, so input 1's number is LED 4 and input 2's is LED
+//! 12, four higher than this algorithm predicts (see docs/13, "Other 4th Gen
+//! models"). The 8-LED stride per input survives; only the base index moves.
+//!
+//! Predictions are therefore `Medium` confidence at best. `focusmute-cli map`
+//! walks the panel against live hardware and promotes what it confirms to
+//! `High`.
 
 use serde::{Deserialize, Serialize};
 
@@ -136,14 +149,15 @@ pub fn predict_layout(schema: &SchemaConstants) -> crate::error::Result<Predicte
 
     let mut leds = Vec::with_capacity(total_leds);
 
-    // Input zone (HIGH confidence — layout is deterministic)
+    // Input zone. The 8-LED stride is deterministic; the base index is an
+    // assumption that does not hold on every model, so this is not `High`.
     for input_idx in 0..input_count {
         let base = input_idx * LEDS_PER_INPUT;
         // Number indicator
         leds.push(PredictedLed {
             index: base,
             label: format!("Input {} — \"{}\" number", input_idx + 1, input_idx + 1),
-            confidence: Confidence::High,
+            confidence: Confidence::Medium,
             zone: LedZone::InputNumber,
         });
         // Halo segments
@@ -151,18 +165,19 @@ pub fn predict_layout(schema: &SchemaConstants) -> crate::error::Result<Predicte
             leds.push(PredictedLed {
                 index: base + seg,
                 label: format!("Input {} — Halo segment {seg}", input_idx + 1),
-                confidence: Confidence::High,
+                confidence: Confidence::Medium,
                 zone: LedZone::InputHalo,
             });
         }
     }
 
-    // Output halo zone (HIGH confidence)
+    // Output halo zone — same caveat: position follows the input zone, which
+    // is itself assumed to start at index 0.
     for seg in 1..=output_halo_segments {
         leds.push(PredictedLed {
             index: total_input_leds + seg - 1,
             label: format!("Output — Halo segment {seg}"),
-            confidence: Confidence::High,
+            confidence: Confidence::Medium,
             zone: LedZone::OutputHalo,
         });
     }
@@ -276,10 +291,39 @@ fn infer_button_labels(
 }
 
 /// Generate a pasteable Rust `ModelProfile` code snippet from a predicted layout.
-pub fn generate_model_profile_code(layout: &PredictedLayout) -> String {
+pub fn generate_model_profile_code(
+    layout: &PredictedLayout,
+    offsets: &crate::offsets::DeviceOffsets,
+) -> String {
     let ident = layout.product_name.to_uppercase().replace([' ', '-'], "_");
 
     let mut code = String::new();
+
+    // Descriptor offsets, read from this device's own firmware schema. A
+    // profile short-circuits schema extraction, so it has to carry them.
+    code.push_str(&format!(
+        "static {ident}_OFFSETS: DeviceOffsets = DeviceOffsets {{\n\
+         \x20   enable_direct_led: {},\n\
+         \x20   direct_led_values: {},\n\
+         \x20   direct_led_count: {},\n\
+         \x20   direct_led_notify: {},\n\
+         \x20   direct_led_colour: {},\n\
+         \x20   direct_led_index: {},\n\
+         \x20   direct_led_colour_notify: {},\n\
+         \x20   selected_input: {},\n\
+         }};\n\n",
+        offsets.enable_direct_led,
+        offsets.direct_led_values,
+        offsets.direct_led_count,
+        offsets.direct_led_notify,
+        offsets.direct_led_colour,
+        offsets.direct_led_index,
+        offsets.direct_led_colour_notify,
+        match offsets.selected_input {
+            Some(o) => format!("Some({o})"),
+            None => "None".to_string(),
+        },
+    ));
 
     // Input halos array
     code.push_str(&format!(
@@ -328,6 +372,14 @@ pub fn generate_model_profile_code(layout: &PredictedLayout) -> String {
         }
         code.push_str("    ],\n");
     }
+    code.push_str("    cache_dependent_buttons: &[],\n");
+    code.push_str("    number_led_selected: DEFAULT_NUMBER_LED_SELECTED,\n");
+    code.push_str("    number_led_unselected: DEFAULT_NUMBER_LED_UNSELECTED,\n");
+    code.push_str(&format!("    offsets: &{ident}_OFFSETS,\n"));
+    code.push_str(
+        "    // Change to ProfileSource::Verified once checked on this project's hardware.\n\
+         \x20   source: ProfileSource::Reported(\"map run\"),\n",
+    );
     code.push_str("};\n");
 
     code
@@ -378,7 +430,7 @@ mod tests {
     use super::*;
 
     /// Helper: build SchemaConstants matching Scarlett 2i2 4th Gen.
-    fn schema_2i2() -> SchemaConstants {
+    pub(super) fn schema_2i2() -> SchemaConstants {
         SchemaConstants {
             product_name: "Scarlett 2i2 4th Gen".into(),
             max_leds: 40,
@@ -400,6 +452,7 @@ mod tests {
             app_space_features: vec!["directMonitoring".into(), "selectedInput".into()],
             firmware_version: "2.0.2417.0".into(),
             schema_format_version: crate::schema::SCHEMA_FORMAT_VERSION,
+            ..SchemaConstants::default()
         }
     }
 
@@ -416,7 +469,7 @@ mod tests {
         // Verify Input 1 number indicator
         assert_eq!(layout.leds[0].index, 0);
         assert_eq!(layout.leds[0].label, "Input 1 — \"1\" number");
-        assert_eq!(layout.leds[0].confidence, Confidence::High);
+        assert_eq!(layout.leds[0].confidence, Confidence::Medium);
         assert_eq!(layout.leds[0].zone, LedZone::InputNumber);
 
         // Verify Input 1 halo segments
@@ -426,7 +479,7 @@ mod tests {
                 layout.leds[seg].label,
                 format!("Input 1 — Halo segment {seg}")
             );
-            assert_eq!(layout.leds[seg].confidence, Confidence::High);
+            assert_eq!(layout.leds[seg].confidence, Confidence::Medium);
             assert_eq!(layout.leds[seg].zone, LedZone::InputHalo);
         }
 
@@ -437,7 +490,7 @@ mod tests {
         // Verify output halo starts at index 16
         assert_eq!(layout.leds[16].index, 16);
         assert_eq!(layout.leds[16].label, "Output — Halo segment 1");
-        assert_eq!(layout.leds[16].confidence, Confidence::High);
+        assert_eq!(layout.leds[16].confidence, Confidence::Medium);
         assert_eq!(layout.leds[16].zone, LedZone::OutputHalo);
 
         // Verify last output halo
@@ -466,6 +519,7 @@ mod tests {
             app_space_features: vec!["directMonitoring".into()],
             firmware_version: String::new(),
             schema_format_version: 0,
+            ..SchemaConstants::default()
         };
         let layout = predict_layout(&schema).unwrap();
         assert_eq!(layout.input_count, 4);
@@ -500,6 +554,7 @@ mod tests {
             app_space_features: vec![],
             firmware_version: String::new(),
             schema_format_version: 0,
+            ..SchemaConstants::default()
         };
         let layout = predict_layout(&schema).unwrap();
         assert_eq!(layout.input_count, 1);
@@ -530,6 +585,7 @@ mod tests {
             app_space_features: vec![],
             firmware_version: String::new(),
             schema_format_version: 0,
+            ..SchemaConstants::default()
         };
         let layout = predict_layout(&schema).unwrap();
         assert_eq!(layout.output_halo_segments, 11); // gradient_count fallback
@@ -554,6 +610,7 @@ mod tests {
             app_space_features: vec![],
             firmware_version: String::new(),
             schema_format_version: 0,
+            ..SchemaConstants::default()
         };
         let result = predict_layout(&schema);
         assert!(result.is_err());
@@ -582,6 +639,7 @@ mod tests {
             app_space_features: vec![],
             firmware_version: String::new(),
             schema_format_version: 0,
+            ..SchemaConstants::default()
         };
         let result = predict_layout(&schema);
         assert!(result.is_err());
@@ -610,6 +668,7 @@ mod tests {
             app_space_features: vec![],
             firmware_version: String::new(),
             schema_format_version: 0,
+            ..SchemaConstants::default()
         };
         let layout = predict_layout(&schema).unwrap();
         // With no control info, button labels fall back to known_button_labels()
@@ -621,7 +680,7 @@ mod tests {
     #[test]
     fn generate_code_matches_2i2_shape() {
         let layout = predict_layout(&schema_2i2()).unwrap();
-        let code = generate_model_profile_code(&layout);
+        let code = generate_model_profile_code(&layout, &crate::offsets::DeviceOffsets::default());
 
         // Should contain the input halos array
         assert!(code.contains("SCARLETT_2I2_4TH_GEN_INPUT_HALOS"));
@@ -665,9 +724,10 @@ mod tests {
             app_space_features: vec![],
             firmware_version: String::new(),
             schema_format_version: 0,
+            ..SchemaConstants::default()
         };
         let layout = predict_layout(&schema).unwrap();
-        let code = generate_model_profile_code(&layout);
+        let code = generate_model_profile_code(&layout, &crate::offsets::DeviceOffsets::default());
 
         // No buttons → empty button_labels array
         assert!(code.contains("button_labels: &[],"));
@@ -685,9 +745,9 @@ mod tests {
         assert_eq!(labels[0].1, Some(Confidence::High));
         assert_eq!(labels[1].0, "Custom Label 1");
         assert_eq!(labels[1].1, Some(Confidence::High));
-        // Third falls through to predicted
+        // Third falls through to predicted, which is never better than Medium
         assert_eq!(labels[2].0, "Input 1 — Halo segment 2");
-        assert_eq!(labels[2].1, Some(Confidence::High));
+        assert_eq!(labels[2].1, Some(Confidence::Medium));
     }
 
     #[test]
@@ -696,7 +756,7 @@ mod tests {
         let labels = resolve_labels(None::<&[&str]>, Some(&layout), 2);
 
         assert_eq!(labels[0].0, "Input 1 — \"1\" number");
-        assert_eq!(labels[0].1, Some(Confidence::High));
+        assert_eq!(labels[0].1, Some(Confidence::Medium));
     }
 
     #[test]
@@ -725,10 +785,51 @@ mod tests {
             app_space_features: vec![],
             firmware_version: String::new(),
             schema_format_version: 0,
+            ..SchemaConstants::default()
         };
         let layout = predict_layout(&schema).unwrap();
         assert_eq!(layout.button_count, 0);
         assert_eq!(layout.first_button_index, 27);
         assert_eq!(layout.leds.len(), 27);
+    }
+}
+
+#[cfg(test)]
+mod generated_code_tests {
+    use super::*;
+
+    /// The docs tell people to paste this into `models.rs`, so it has to name
+    /// every field of `ModelProfile`. A missing one is a compile error for
+    /// whoever follows that instruction.
+    #[test]
+    fn generated_profile_names_every_model_profile_field() {
+        let layout = predict_layout(&tests::schema_2i2()).unwrap();
+        let code = generate_model_profile_code(&layout, &crate::offsets::DeviceOffsets::default());
+        for field in [
+            "name:",
+            "input_count:",
+            "led_count:",
+            "input_halos:",
+            "output_halo_segments:",
+            "button_labels:",
+            "cache_dependent_buttons:",
+            "number_led_selected:",
+            "number_led_unselected:",
+            "offsets:",
+            "source:",
+        ] {
+            assert!(
+                code.contains(field),
+                "generated code is missing {field}:\n{code}"
+            );
+        }
+        assert!(
+            code.contains("DeviceOffsets {"),
+            "offsets static missing:\n{code}"
+        );
+        assert!(
+            code.contains("selected_input: Some(331)"),
+            "2i2 has selectedInput:\n{code}"
+        );
     }
 }

@@ -63,6 +63,22 @@ pub(super) fn cmd_map(
     if ctx.predicted.is_some() && hardcoded.is_none() {
         println!("Labels predicted from firmware schema. Confirm or correct each one.");
     }
+    // An unverified profile is the usual reason to be running this command, so
+    // say what it claims before the walk rather than leaving the user to guess.
+    if let Some(profile) = ctx.profile
+        && let Some(warning) = profile.provenance_warning()
+    {
+        println!("{warning}");
+        let expected: Vec<String> = profile
+            .input_halos
+            .iter()
+            .enumerate()
+            .map(|(i, h)| format!("input {} at LED {}", i + 1, h.number_led))
+            .collect();
+        if !expected.is_empty() {
+            println!("It expects {}.", expected.join(", "));
+        }
+    }
     println!("Each LED flashes. Confirm the label matches, or type a correction.");
     println!("Enter = correct, type new label = correction, q = quit.");
     println!();
@@ -189,7 +205,7 @@ pub(super) fn cmd_map(
         if output_code {
             println!();
             println!("Model profile code:");
-            println!("{}", layout::generate_model_profile_code(pl));
+            println!("{}", layout::generate_model_profile_code(pl, &ctx.offsets));
         }
     } else if output.is_some() || output_code {
         log::warn!("[cli] --output/--output-code require schema extraction (not available)");

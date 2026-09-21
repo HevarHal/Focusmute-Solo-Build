@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Scarlett Solo 4th Gen LED profile, so mute indication targets the right number LEDs without a `map` run. The layout is reported by [SunsetSH/focusmute](https://github.com/SunsetSH/focusmute) and has not been verified on this project's hardware; FocusMute names the source in a startup warning whenever it uses the profile. If an index is wrong, `focusmute-cli map` reports what each LED really is
+
+### Changed
+
+- Descriptor offsets for the LED write path, `enableDirectLEDMode` and `selectedInput` now come from the firmware schema instead of the Scarlett 2i2's values, and each model profile carries its own. The schema cache format bumped, so the next run re-reads it from the device
+- Predicted LED positions report as "predicted" rather than "confirmed". The prediction assumes the input indicators come first, which is wrong on the Scarlett Solo; run `focusmute-cli map` to confirm the indices on an unprofiled device
+- The Linux udev rule grants the `audio` group access (mode `0660`) instead of making the device node world-writable. On systems without logind, `sudo usermod -aG audio "$USER"` is now needed
+
+### Fixed
+
+- Mute indication on any device other than the Scarlett 2i2 4th Gen wrote the LED colour into the wrong descriptor field, because the single-LED offsets differ per model
+- Restoring the number LEDs on unmute read `selectedInput` at the 2i2's offset on every model, picking the restore colour from an unrelated field on devices that have no such control
+
 ## [0.11.0] - 2026-09-11
 
 ### Changed

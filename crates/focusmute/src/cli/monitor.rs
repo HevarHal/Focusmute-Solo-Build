@@ -47,6 +47,7 @@ fn monitor_setup(config: &mut Config) -> Result<MonitorCtx> {
         ctx.input_count(),
         ctx.profile,
         ctx.predicted.as_ref(),
+        &ctx.offsets,
     )
     .map_err(focusmute_lib::FocusmuteError::Config)?;
     for w in &warnings {
@@ -228,6 +229,7 @@ mod tests {
             mute_colors: vec![mute_color, mute_color],
             selected_color: 0,
             unselected_color: 0,
+            offsets: Default::default(),
         };
         let indicator = MuteIndicator::new(2, false, mute_color, strategy);
         let ctx = MonitorCtx {

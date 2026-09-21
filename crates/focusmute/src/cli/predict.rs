@@ -42,7 +42,8 @@ pub(super) fn cmd_predict(schema_file: String, json_output: bool) -> Result<()> 
         }
         println!();
         println!("Model profile code:");
-        println!("{}", layout::generate_model_profile_code(&pl));
+        let offsets = focusmute_lib::offsets::DeviceOffsets::from_schema(&sc);
+        println!("{}", layout::generate_model_profile_code(&pl, &offsets));
     }
     Ok(())
 }

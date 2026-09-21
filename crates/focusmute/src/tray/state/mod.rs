@@ -114,12 +114,16 @@ fn resolve_strategy(
     config: &mut Config,
     ctx: Option<&DeviceContext>,
 ) -> Result<(led::MuteStrategy, Vec<String>), String> {
-    let (input_count, profile, predicted) = match ctx {
-        Some(c) => (c.input_count(), c.profile, c.predicted.as_ref()),
-        None => (None, None, None),
+    // With no device context there is nothing to resolve against and strategy
+    // resolution fails below; the offsets are a placeholder that is never used
+    // to write, since every write path needs a connected device.
+    let fallback_offsets = focusmute_lib::offsets::DeviceOffsets::default();
+    let (input_count, profile, predicted, offsets) = match ctx {
+        Some(c) => (c.input_count(), c.profile, c.predicted.as_ref(), &c.offsets),
+        None => (None, None, None, &fallback_offsets),
     };
     let (_mode, strategy, warnings) =
-        led::resolve_strategy_from_config(config, input_count, profile, predicted)?;
+        led::resolve_strategy_from_config(config, input_count, profile, predicted, offsets)?;
     Ok((strategy, warnings))
 }
 
@@ -176,6 +180,7 @@ impl TrayState {
             mute_colors: vec![],
             selected_color: 0,
             unselected_color: 0,
+            offsets: Default::default(),
         };
         let indicator = MuteIndicator::new(2, false, init_mute_color, noop_strategy);
 

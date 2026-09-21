@@ -6,6 +6,19 @@
 
 use std::ops::Range;
 
+use crate::offsets::DeviceOffsets;
+use crate::protocol;
+
+/// Where a profile's values came from, and therefore how far to trust them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProfileSource {
+    /// Every value was checked against the device on this project's bench.
+    Verified,
+    /// Reported by the named third party and not reproduced here. Callers warn
+    /// and point at `map`, because nobody here has seen these LEDs light up.
+    Reported(&'static str),
+}
+
 /// Firmware color for the currently-selected input's number LED.
 ///
 /// The firmware drives number LEDs directly to hardware without updating
@@ -67,6 +80,30 @@ pub struct ModelProfile {
     ///
     /// Visual approximation. Unselected inputs appear white on the 2i2.
     pub number_led_unselected: u32,
+
+    /// Descriptor offsets for this model's LED write path.
+    ///
+    /// A profile short-circuits schema extraction, so it has to carry its own
+    /// offsets. Inheriting a shared default would hand every profiled model the
+    /// 2i2's numbers, which is exactly the bug the schema lookup exists to stop.
+    pub offsets: &'static DeviceOffsets,
+
+    /// Provenance of everything above.
+    pub source: ProfileSource,
+}
+
+impl ModelProfile {
+    /// A warning to surface to the user, or `None` for a verified profile.
+    pub fn provenance_warning(&self) -> Option<String> {
+        match self.source {
+            ProfileSource::Verified => None,
+            ProfileSource::Reported(who) => Some(format!(
+                "{} LED layout is reported by {who} and unverified here; \
+                 run `focusmute-cli map` to confirm the indices",
+                self.name
+            )),
+        }
+    }
 }
 
 // ── Scarlett 2i2 4th Gen ──
@@ -95,6 +132,19 @@ static SCARLETT_2I2_CACHE_BUTTONS: [(usize, u32); 6] = [
     (39, 0x0038_0000), // USB — green (firmware value)
 ];
 
+/// The 2i2's own APP_SPACE offsets. Asserted equal to `DeviceOffsets::default()`
+/// and to what the 2i2 firmware schema yields, in the tests below.
+static SCARLETT_2I2_OFFSETS: DeviceOffsets = DeviceOffsets {
+    enable_direct_led: protocol::OFF_ENABLE_DIRECT_LED,
+    direct_led_values: protocol::OFF_DIRECT_LED_VALUES,
+    direct_led_count: protocol::DIRECT_LED_COUNT,
+    direct_led_notify: protocol::NOTIFY_DIRECT_LED_VALUES,
+    direct_led_colour: protocol::OFF_DIRECT_LED_COLOUR,
+    direct_led_index: protocol::OFF_DIRECT_LED_INDEX,
+    direct_led_colour_notify: protocol::NOTIFY_DIRECT_LED_COLOUR,
+    selected_input: Some(protocol::OFF_SELECTED_INPUT),
+};
+
 static SCARLETT_2I2: ModelProfile = ModelProfile {
     name: "Scarlett 2i2 4th Gen",
     input_count: 2,
@@ -119,6 +169,78 @@ static SCARLETT_2I2: ModelProfile = ModelProfile {
         "USB symbol",                  // 39
     ],
     cache_dependent_buttons: &SCARLETT_2I2_CACHE_BUTTONS,
+    offsets: &SCARLETT_2I2_OFFSETS,
+    source: ProfileSource::Verified,
+};
+
+// ── Scarlett Solo 4th Gen ──
+//
+// Reported by SunsetSH/focusmute, an Apache-2.0 derivative of this project,
+// from a panel sweep of one device (its docs/20-ledtest.md). Not reproduced
+// here: there is no Solo on this bench. `ProfileSource::Reported` makes the
+// app say so at runtime. Correcting an index means editing this profile by
+// hand: `map` walks the panel and reports what each LED really is, but
+// `--output-code` prints the schema *prediction*, not the corrected map.
+//
+// Known soft spot: LED 12 follows from the 8-LED stride and its symmetry with
+// LED 4 rather than from the sweep, which recorded no visible change at that
+// index. The mic was in input 2 at the time, so the firmware was actively
+// driving those LEDs and would have repainted the probe colour immediately.
+
+/// Offsets observed on a Solo running firmware 2.0.2417.0. Every one differs
+/// from the 2i2's; see docs/13 § "Other 4th Gen Models".
+static SCARLETT_SOLO_OFFSETS: DeviceOffsets = DeviceOffsets {
+    enable_direct_led: 72,
+    direct_led_values: 88,
+    direct_led_count: 32,
+    direct_led_notify: protocol::NOTIFY_DIRECT_LED_VALUES,
+    direct_led_colour: 80,
+    direct_led_index: 84,
+    direct_led_colour_notify: protocol::NOTIFY_DIRECT_LED_COLOUR,
+    // The Solo has no input-select control, so no number is ever "selected".
+    selected_input: None,
+};
+
+static SCARLETT_SOLO_INPUT_HALOS: [HaloRange; 2] = [
+    HaloRange {
+        number_led: 4,
+        segments: 6..12,
+    }, // Input 1 — instrument. Index 5 lit nothing during the sweep.
+    HaloRange {
+        number_led: 12,
+        segments: 14..20,
+    }, // Input 2 — mic. Index 13 lit nothing during the sweep.
+];
+
+static SCARLETT_SOLO: ModelProfile = ModelProfile {
+    name: "Scarlett Solo 4th Gen",
+    input_count: 2,
+    led_count: 32,
+    input_halos: &SCARLETT_SOLO_INPUT_HALOS,
+    // The Solo's Output indicator is a two-segment button (LEDs 24-25), not a
+    // metering ring, so there is no output halo. The range is empty but anchored
+    // past the input zone: `model_labels` derives the first button index from
+    // `output_halo_segments.end`, and 0..0 would place buttons over the inputs.
+    output_halo_segments: 20..20,
+    // No selectedInput: `restore_number_leds` returns every number to the
+    // unselected colour, and this value can never be chosen. It is set to the
+    // same white so that a future caller reading it cannot paint an input green
+    // on a device that has no notion of a selected input.
+    number_led_selected: 0xAAFF_DD00,
+    // Carried over from the 2i2, where it was tuned by eye against firmware
+    // white. Not re-tuned against a Solo panel.
+    number_led_unselected: 0xAAFF_DD00,
+    // Air (0), Inst (2), 48V (3), Output (24-25), USB (26) and Direct (27, 31)
+    // were all observed, but this struct places buttons contiguously after the
+    // output halo and the Solo interleaves them with the input zone. Leaving
+    // this empty keeps `map` from printing wrong labels; docs/13 carries the
+    // real positions.
+    button_labels: &[],
+    // Restoring these needs DATA_NOTIFY(5), which blanks independent LEDs on a
+    // Solo with no reliable way back. Deliberately empty.
+    cache_dependent_buttons: &[],
+    offsets: &SCARLETT_SOLO_OFFSETS,
+    source: ProfileSource::Reported("SunsetSH/focusmute"),
 };
 
 /// Detect the model profile from a model name.
@@ -131,7 +253,10 @@ pub fn detect_model(model_name: &str) -> Option<&'static ModelProfile> {
     if model_name.eq_ignore_ascii_case("Scarlett 2i2 4th Gen") {
         return Some(&SCARLETT_2I2);
     }
-    // Future: add Solo, 4i4, etc.
+    if model_name.eq_ignore_ascii_case("Scarlett Solo 4th Gen") {
+        return Some(&SCARLETT_SOLO);
+    }
+    // Future: add 4i4, etc.
     None
 }
 
@@ -203,9 +328,125 @@ mod tests {
         assert!(detect_model("SCARLETT 2I2 4TH GEN").is_some());
     }
 
+    // ── Scarlett Solo 4th Gen (reported profile) ──
+
+    #[test]
+    fn detect_solo_returns_the_reported_profile() {
+        let profile = detect_model("Scarlett Solo 4th Gen").expect("Solo profile exists");
+        assert_eq!(profile.name, "Scarlett Solo 4th Gen");
+        assert_eq!(profile.input_count, 2);
+        assert_eq!(profile.led_count, 32);
+        assert_eq!(
+            profile.source,
+            ProfileSource::Reported("SunsetSH/focusmute")
+        );
+    }
+
+    /// The whole point of the profile: mute lands on the numbers the sweep saw,
+    /// not the 0 and 8 a positional prediction produces.
+    #[test]
+    fn solo_profile_targets_the_reported_number_leds() {
+        let profile = detect_model("Scarlett Solo 4th Gen").unwrap();
+        let numbers: Vec<usize> = profile.input_halos.iter().map(|h| h.number_led).collect();
+        assert_eq!(numbers, vec![4, 12]);
+        let two_i_two = detect_model("Scarlett 2i2 4th Gen").unwrap();
+        let predicted: Vec<usize> = two_i_two.input_halos.iter().map(|h| h.number_led).collect();
+        assert_ne!(numbers, predicted, "must not reuse the 2i2 positions");
+    }
+
+    /// An unverified profile has to say so wherever it is used.
+    #[test]
+    fn reported_profile_warns_and_verified_one_does_not() {
+        let solo = detect_model("Scarlett Solo 4th Gen").unwrap();
+        let warning = solo
+            .provenance_warning()
+            .expect("reported profile must warn");
+        assert!(warning.contains("SunsetSH/focusmute"), "warning: {warning}");
+        assert!(
+            warning.contains("map"),
+            "warning should point at map: {warning}"
+        );
+
+        assert_eq!(
+            detect_model("Scarlett 2i2 4th Gen")
+                .unwrap()
+                .provenance_warning(),
+            None
+        );
+    }
+
+    /// Restoring these needs DATA_NOTIFY(5), which blanks independent LEDs on a
+    /// Solo with no reliable way back (docs/13). Both lists stay empty.
+    #[test]
+    fn solo_profile_declares_no_bulk_restore_state() {
+        let profile = detect_model("Scarlett Solo 4th Gen").unwrap();
+        assert!(profile.cache_dependent_buttons.is_empty());
+        assert!(profile.button_labels.is_empty());
+        assert!(profile.output_halo_segments.is_empty());
+    }
+
+    /// The Solo has no input-select control, so neither number colour may be
+    /// the green the 2i2 uses for its selected input.
+    #[test]
+    fn solo_profile_never_paints_a_selected_input_green() {
+        let profile = detect_model("Scarlett Solo 4th Gen").unwrap();
+        assert_eq!(profile.number_led_selected, profile.number_led_unselected);
+        assert_ne!(profile.number_led_selected, DEFAULT_NUMBER_LED_SELECTED);
+        assert_eq!(profile.offsets.selected_input, None);
+    }
+
+    // ── Profile-owned offsets ──
+
+    #[test]
+    fn each_profile_carries_its_own_write_path() {
+        let two_i_two = detect_model("Scarlett 2i2 4th Gen").unwrap().offsets;
+        let solo = detect_model("Scarlett Solo 4th Gen").unwrap().offsets;
+        for (a, b) in [
+            (two_i_two.direct_led_colour, solo.direct_led_colour),
+            (two_i_two.direct_led_index, solo.direct_led_index),
+            (two_i_two.direct_led_values, solo.direct_led_values),
+            (two_i_two.enable_direct_led, solo.enable_direct_led),
+        ] {
+            assert_ne!(a, b, "the two models must not share this offset");
+        }
+        assert_eq!(solo.direct_led_colour, 80);
+        assert_eq!(solo.direct_led_index, 84);
+        assert_eq!(solo.direct_led_values, 88);
+        assert_eq!(solo.enable_direct_led, 72);
+        assert_eq!(solo.direct_led_count, 32);
+    }
+
+    /// The profile's copy and the firmware schema are two statements of the
+    /// same fact. If they ever disagree, one of them is wrong.
+    #[test]
+    fn the_2i2_profile_offsets_match_what_its_schema_yields() {
+        let from_schema = DeviceOffsets::from_schema(&crate::schema::SchemaConstants {
+            product_name: "Scarlett 2i2 4th Gen".into(),
+            max_leds: 40,
+            max_inputs: 2,
+            max_outputs: 2,
+            direct_led_count: 40,
+            direct_led_offset: 92,
+            direct_led_colour_offset: 84,
+            direct_led_index_offset: 88,
+            direct_led_colour_notify: 8,
+            enable_direct_led_offset: 77,
+            direct_led_notify: 5,
+            selected_input_offset: Some(331),
+            ..Default::default()
+        });
+        let profile = detect_model("Scarlett 2i2 4th Gen").unwrap().offsets;
+        assert_eq!(profile.direct_led_colour, from_schema.direct_led_colour);
+        assert_eq!(profile.direct_led_index, from_schema.direct_led_index);
+        assert_eq!(profile.direct_led_values, from_schema.direct_led_values);
+        assert_eq!(profile.direct_led_count, from_schema.direct_led_count);
+        assert_eq!(profile.enable_direct_led, from_schema.enable_direct_led);
+        assert_eq!(profile.direct_led_notify, from_schema.direct_led_notify);
+        assert_eq!(profile.selected_input, from_schema.selected_input);
+    }
+
     #[test]
     fn detect_unknown_model_returns_none() {
-        assert!(detect_model("Scarlett Solo 4th Gen").is_none());
         assert!(detect_model("Scarlett 4i4 4th Gen").is_none());
         assert!(detect_model("Unknown Device").is_none());
         assert!(detect_model("").is_none());
@@ -261,6 +502,62 @@ mod tests {
         assert!(profile.input_halos[0].segments.end <= profile.input_halos[1].number_led);
         // Input 2 ends before Output starts
         assert!(profile.input_halos[1].segments.end <= profile.output_halo_segments.start);
+    }
+
+    /// The invariants above were written against the only profile that existed
+    /// and never ran on any other. Every profile has to satisfy them, including
+    /// the ordering one: `model_labels` computes the first button index from
+    /// `output_halo_segments.end`, so a profile whose output range sits before
+    /// its inputs would write button labels over the input zone.
+    #[test]
+    fn every_profile_satisfies_the_layout_invariants() {
+        for name in ["Scarlett 2i2 4th Gen", "Scarlett Solo 4th Gen"] {
+            let p = detect_model(name).unwrap_or_else(|| panic!("{name} profile missing"));
+            assert_eq!(p.name, name, "profile name must match its lookup key");
+            assert_eq!(
+                p.input_halos.len(),
+                p.input_count,
+                "{name}: one halo range per input"
+            );
+            let mut cursor = 0usize;
+            for (i, halo) in p.input_halos.iter().enumerate() {
+                assert!(
+                    halo.number_led < p.led_count,
+                    "{name}: input {i} number LED"
+                );
+                assert!(
+                    halo.segments.end <= p.led_count,
+                    "{name}: input {i} halo end"
+                );
+                assert!(
+                    halo.number_led >= cursor,
+                    "{name}: input {i} number LED overlaps the previous input"
+                );
+                assert!(
+                    halo.segments.start > halo.number_led,
+                    "{name}: input {i} halo must follow its number LED"
+                );
+                cursor = halo.segments.end;
+            }
+            assert!(
+                p.output_halo_segments.start >= cursor,
+                "{name}: output halo must not precede the input zone"
+            );
+            assert!(
+                p.output_halo_segments.end <= p.led_count,
+                "{name}: output halo end"
+            );
+            assert!(
+                p.output_halo_segments.end + p.button_labels.len() <= p.led_count,
+                "{name}: button labels would run past the LED count"
+            );
+            for (idx, _) in p.cache_dependent_buttons {
+                assert!(
+                    *idx < p.led_count,
+                    "{name}: cache button {idx} out of range"
+                );
+            }
+        }
     }
 
     // ── model_labels ──

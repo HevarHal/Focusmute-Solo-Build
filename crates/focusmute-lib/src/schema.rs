@@ -26,10 +26,13 @@ use crate::device::{DeviceError, Result, ScarlettDevice};
 use crate::protocol::*;
 
 /// Current schema cache format version. Bump when SchemaConstants fields change.
-pub const SCHEMA_FORMAT_VERSION: u32 = 1;
+pub const SCHEMA_FORMAT_VERSION: u32 = 2;
 
 /// Constants extracted from the firmware schema for a specific model.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// `Default` exists so tests can name only the fields they exercise; it is not
+/// a usable device description on its own (every offset is zero).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SchemaConstants {
     pub product_name: String,
     /// kMAX_NUMBER_LEDS from enum maximum_array_sizes.
@@ -48,6 +51,38 @@ pub struct SchemaConstants {
     pub direct_led_count: usize,
     /// directLEDValues offset in descriptor.
     pub direct_led_offset: u32,
+
+    /// `directLEDColour` offset — the single-LED write path's colour field.
+    ///
+    /// Model-specific: 84 on the Scarlett 2i2 4th Gen, 80 on the Solo. Writing
+    /// one model's offset to another lands in the neighbouring field, so this
+    /// must come from the schema rather than a shared constant.
+    #[serde(default)]
+    pub direct_led_colour_offset: u32,
+
+    /// `directLEDIndex` offset — the single-LED write path's index field.
+    #[serde(default)]
+    pub direct_led_index_offset: u32,
+
+    /// `notify-device` event ID shared by `directLEDColour` and `directLEDIndex`.
+    #[serde(default)]
+    pub direct_led_colour_notify: u32,
+
+    /// `enableDirectLEDMode` offset — 77 on the 2i2, 72 on the Solo.
+    #[serde(default)]
+    pub enable_direct_led_offset: u32,
+
+    /// `directLEDValues` `notify-device` event ID.
+    #[serde(default)]
+    pub direct_led_notify: u32,
+
+    /// `selectedInput` offset, or `None` when the model has no such control.
+    ///
+    /// Present on the 2i2 (offset 331), absent on the Solo. On a model without
+    /// it the offset belongs to an unrelated field, so reading it to decide a
+    /// restore colour yields whatever that field happens to hold.
+    #[serde(default)]
+    pub selected_input_offset: Option<u32>,
 
     /// kNUMBER_METERING_SEGMENTS — total halo segments (e.g., 25 for 2i2 = 2×7 + 11).
     #[serde(default)]
@@ -235,6 +270,51 @@ pub fn parse_schema(json: &str) -> crate::error::Result<SchemaConstants> {
         .ok_or_else(|| schema_err("missing directLEDValues offset"))?
         as u32;
 
+    let direct_led_notify = direct_leds
+        .get("notify-device")
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| schema_err("missing directLEDValues notify-device"))?
+        as u32;
+
+    let enable_direct_led_offset = root
+        .pointer("/structs/APP_SPACE/members/enableDirectLEDMode")
+        .and_then(|m| m.get("offset"))
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| schema_err("missing structs.APP_SPACE.members.enableDirectLEDMode offset"))?
+        as u32;
+
+    // Extract the single-LED write path (directLEDColour + directLEDIndex).
+    // Both are required: it is the only path used to drive the mute indicator.
+    let direct_led_colour = root
+        .pointer("/structs/APP_SPACE/members/directLEDColour")
+        .ok_or_else(|| schema_err("missing structs.APP_SPACE.members.directLEDColour"))?;
+
+    let direct_led_colour_offset = direct_led_colour
+        .get("offset")
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| schema_err("missing directLEDColour offset"))?
+        as u32;
+
+    let direct_led_colour_notify = direct_led_colour
+        .get("notify-device")
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| schema_err("missing directLEDColour notify-device"))?
+        as u32;
+
+    let direct_led_index_offset = root
+        .pointer("/structs/APP_SPACE/members/directLEDIndex")
+        .and_then(|m| m.get("offset"))
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| schema_err("missing structs.APP_SPACE.members.directLEDIndex offset"))?
+        as u32;
+
+    // selectedInput is optional — the Solo has no input-select control.
+    let selected_input_offset = root
+        .pointer("/structs/APP_SPACE/members/selectedInput")
+        .and_then(|m| m.get("offset"))
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u32);
+
     // Extract kNUMBER_METERING_SEGMENTS (optional — default 0 if missing)
     let metering_segments = enumerators
         .get("kNUMBER_METERING_SEGMENTS")
@@ -277,6 +357,12 @@ pub fn parse_schema(json: &str) -> crate::error::Result<SchemaConstants> {
         gradient_notify,
         direct_led_count,
         direct_led_offset,
+        direct_led_colour_offset,
+        direct_led_index_offset,
+        direct_led_colour_notify,
+        enable_direct_led_offset,
+        direct_led_notify,
+        selected_input_offset,
         metering_segments,
         input_controls,
         app_space_features,
@@ -424,7 +510,7 @@ fn extract_enum_value(enumerators: &serde_json::Value, key: &str) -> crate::erro
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::device::mock::MockDevice;
     use flate2::Compression;
@@ -432,7 +518,7 @@ mod tests {
     use std::io::Write;
 
     /// Minimal valid schema JSON for testing.
-    fn test_schema_json() -> String {
+    pub(crate) fn test_schema_json() -> String {
         serde_json::json!({
             "device-specification": {
                 "product-name": "Scarlett 2i2 4th Gen"
@@ -454,9 +540,12 @@ mod tests {
                             "array-shape": [11],
                             "notify-device": 9
                         },
+                        "enableDirectLEDMode": {"offset": 77},
+                        "directLEDColour": {"offset": 84, "notify-device": 8},
+                        "directLEDIndex": {"offset": 88, "notify-device": 8},
                         "directLEDValues": {
                             "offset": 92,
-                            "array-shape": [40]
+                            "array-shape": [40], "notify-device": 5
                         }
                     }
                 }
@@ -466,7 +555,7 @@ mod tests {
     }
 
     /// Encode JSON → zlib → base64 (reverse of decode_schema).
-    fn encode_schema(json: &str) -> Vec<u8> {
+    pub(crate) fn encode_schema(json: &str) -> Vec<u8> {
         let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
         encoder.write_all(json.as_bytes()).unwrap();
         let compressed = encoder.finish().unwrap();
@@ -519,6 +608,100 @@ mod tests {
         assert_eq!(constants.direct_led_offset, 92);
     }
 
+    /// The single-LED write path is model-specific and must come from the
+    /// schema. These are the 2i2's real values from
+    /// docs/device_firmware_schema.json.
+    #[test]
+    fn parse_schema_extracts_the_single_led_write_path() {
+        let constants = parse_schema(&test_schema_json()).unwrap();
+        assert_eq!(constants.direct_led_colour_offset, 84);
+        assert_eq!(constants.direct_led_index_offset, 88);
+        assert_eq!(constants.direct_led_colour_notify, 8);
+    }
+
+    /// A compact APP_SPACE puts the same members four bytes earlier and has no
+    /// `selectedInput`. Shape observed on a Scarlett Solo 4th Gen.
+    #[test]
+    fn parse_schema_compact_layout_keeps_its_own_offsets() {
+        let json = serde_json::json!({
+            "device-specification": { "product-name": "Compact 4th Gen" },
+            "enums": { "maximum_array_sizes": { "enumerators": {
+                "kMAX_NUMBER_LEDS": 32,
+                "kMAX_NUMBER_INPUTS": 2,
+                "kMAX_NUMBER_OUTPUTS": 2
+            }}},
+            "structs": { "APP_SPACE": { "members": {
+                "LEDcolors": {"offset": 300, "array-shape": [11], "notify-device": 9},
+                "enableDirectLEDMode": {"offset": 77},
+                "directLEDColour": {"offset": 80, "notify-device": 8},
+                "directLEDIndex": {"offset": 84, "notify-device": 8},
+                "directLEDValues": {"offset": 88, "array-shape": [32], "notify-device": 5}
+            }}}
+        })
+        .to_string();
+        let constants = parse_schema(&json).unwrap();
+        assert_eq!(constants.direct_led_colour_offset, 80);
+        assert_eq!(constants.direct_led_index_offset, 84);
+        assert_eq!(constants.direct_led_offset, 88);
+        assert_eq!(
+            constants.selected_input_offset, None,
+            "a model with no selectedInput member must not inherit the 2i2's offset"
+        );
+    }
+
+    #[test]
+    fn parse_schema_extracts_selected_input_offset_when_present() {
+        let json = serde_json::json!({
+            "device-specification": { "product-name": "Test" },
+            "enums": { "maximum_array_sizes": { "enumerators": {
+                "kMAX_NUMBER_LEDS": 40,
+                "kMAX_NUMBER_INPUTS": 2,
+                "kMAX_NUMBER_OUTPUTS": 2
+            }}},
+            "structs": { "APP_SPACE": { "members": {
+                "LEDcolors": {"offset": 384, "array-shape": [11], "notify-device": 9},
+                "enableDirectLEDMode": {"offset": 77},
+                "directLEDColour": {"offset": 84, "notify-device": 8},
+                "directLEDIndex": {"offset": 88, "notify-device": 8},
+                "directLEDValues": {"offset": 92, "array-shape": [40], "notify-device": 5},
+                "selectedInput": {"offset": 331, "notify-device": 17}
+            }}}
+        })
+        .to_string();
+        assert_eq!(
+            parse_schema(&json).unwrap().selected_input_offset,
+            Some(331)
+        );
+    }
+
+    /// Without these members the write path has no offsets to use, and the
+    /// 2i2 fallback is exactly the bug this extraction exists to prevent.
+    #[test]
+    fn parse_schema_rejects_a_missing_single_led_write_path() {
+        for omit in ["directLEDColour", "directLEDIndex"] {
+            let mut members = serde_json::json!({
+                "LEDcolors": {"offset": 384, "array-shape": [11], "notify-device": 9},
+                "enableDirectLEDMode": {"offset": 77},
+                "directLEDColour": {"offset": 84, "notify-device": 8},
+                "directLEDIndex": {"offset": 88, "notify-device": 8},
+                "directLEDValues": {"offset": 92, "array-shape": [40], "notify-device": 5}
+            });
+            members.as_object_mut().unwrap().remove(omit);
+            let json = serde_json::json!({
+                "device-specification": { "product-name": "Test" },
+                "enums": { "maximum_array_sizes": { "enumerators": {
+                    "kMAX_NUMBER_LEDS": 40,
+                    "kMAX_NUMBER_INPUTS": 2,
+                    "kMAX_NUMBER_OUTPUTS": 2
+                }}},
+                "structs": { "APP_SPACE": { "members": members }}
+            })
+            .to_string();
+            let err = parse_schema(&json).unwrap_err().to_string();
+            assert!(err.contains(omit), "error should name {omit}, got: {err}");
+        }
+    }
+
     #[test]
     fn parse_schema_missing_product_name() {
         let json = r#"{"enums":{},"structs":{}}"#;
@@ -569,9 +752,12 @@ mod tests {
                             "array-shape": [11],
                             "notify-device": 9
                         },
+                        "enableDirectLEDMode": {"offset": 77},
+                        "directLEDColour": {"offset": 84, "notify-device": 8},
+                        "directLEDIndex": {"offset": 88, "notify-device": 8},
                         "directLEDValues": {
                             "offset": 92,
-                            "array-shape": [40]
+                            "array-shape": [40], "notify-device": 5
                         }
                     }
                 }
@@ -645,6 +831,7 @@ mod tests {
             app_space_features: vec!["directMonitoring".into()],
             firmware_version: "2.0.2417.0".into(),
             schema_format_version: SCHEMA_FORMAT_VERSION,
+            ..SchemaConstants::default()
         };
         let json = serde_json::to_string(&constants).unwrap();
         let restored: SchemaConstants = serde_json::from_str(&json).unwrap();
@@ -705,9 +892,12 @@ mod tests {
                             "array-shape": [11],
                             "notify-device": 9
                         },
+                        "enableDirectLEDMode": {"offset": 77},
+                        "directLEDColour": {"offset": 84, "notify-device": 8},
+                        "directLEDIndex": {"offset": 88, "notify-device": 8},
                         "directLEDValues": {
                             "offset": 92,
-                            "array-shape": [40]
+                            "array-shape": [40], "notify-device": 5
                         },
                         "directMonitoring": {
                             "type": "uint8",
@@ -771,9 +961,12 @@ mod tests {
                             "array-shape": [11],
                             "notify-device": 9
                         },
+                        "enableDirectLEDMode": {"offset": 77},
+                        "directLEDColour": {"offset": 84, "notify-device": 8},
+                        "directLEDIndex": {"offset": 88, "notify-device": 8},
                         "directLEDValues": {
                             "offset": 92,
-                            "array-shape": [40]
+                            "array-shape": [40], "notify-device": 5
                         }
                     }
                 }
@@ -838,6 +1031,7 @@ mod tests {
             app_space_features: vec![],
             firmware_version: "2.0.2417.0".into(),
             schema_format_version: SCHEMA_FORMAT_VERSION,
+            ..SchemaConstants::default()
         };
         let json = serde_json::to_string(&constants).unwrap();
         let restored: SchemaConstants = serde_json::from_str(&json).unwrap();
@@ -871,6 +1065,7 @@ mod tests {
             app_space_features: vec![],
             firmware_version: fw.into(),
             schema_format_version: SCHEMA_FORMAT_VERSION,
+            ..SchemaConstants::default()
         }
     }
 
@@ -949,9 +1144,12 @@ mod tests {
                             "array-shape": [0],
                             "notify-device": 9
                         },
+                        "enableDirectLEDMode": {"offset": 77},
+                        "directLEDColour": {"offset": 84, "notify-device": 8},
+                        "directLEDIndex": {"offset": 88, "notify-device": 8},
                         "directLEDValues": {
                             "offset": 92,
-                            "array-shape": [40]
+                            "array-shape": [40], "notify-device": 5
                         }
                     }
                 }
@@ -986,9 +1184,12 @@ mod tests {
                             "array-shape": [11],
                             "notify-device": 9
                         },
+                        "enableDirectLEDMode": {"offset": 77},
+                        "directLEDColour": {"offset": 84, "notify-device": 8},
+                        "directLEDIndex": {"offset": 88, "notify-device": 8},
                         "directLEDValues": {
                             "offset": 0,
-                            "array-shape": [40]
+                            "array-shape": [40], "notify-device": 5
                         }
                     }
                 }
@@ -1020,9 +1221,12 @@ mod tests {
                             "array-shape": [11],
                             "notify-device": 9
                         },
+                        "enableDirectLEDMode": {"offset": 77},
+                        "directLEDColour": {"offset": 84, "notify-device": 8},
+                        "directLEDIndex": {"offset": 88, "notify-device": 8},
                         "directLEDValues": {
                             "offset": 92,
-                            "array-shape": [40]
+                            "array-shape": [40], "notify-device": 5
                         }
                     }
                 }

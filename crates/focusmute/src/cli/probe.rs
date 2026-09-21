@@ -195,7 +195,8 @@ pub(super) fn cmd_probe(dump_schema: bool) -> Result<()> {
         if let Some(ref sc) = schema_constants {
             if let Ok(pl) = layout::predict_layout(sc) {
                 println!("// Add to crates/focusmute-lib/src/models.rs:");
-                println!("{}", layout::generate_model_profile_code(&pl));
+                let offsets = focusmute_lib::offsets::DeviceOffsets::from_schema(sc);
+                println!("{}", layout::generate_model_profile_code(&pl, &offsets));
             } else {
                 print_manual_template(info.model(), schema_constants.as_ref());
             }
@@ -214,13 +215,13 @@ mod tests {
     #[test]
     fn print_manual_template_without_schema() {
         // Should not panic — just prints to stdout
-        print_manual_template("Scarlett Solo 4th Gen", None);
+        print_manual_template("Scarlett 4i4 4th Gen", None);
     }
 
     #[test]
     fn print_manual_template_with_schema() {
         let sc = schema::SchemaConstants {
-            product_name: "Scarlett Solo 4th Gen".into(),
+            product_name: "Scarlett 4i4 4th Gen".into(),
             max_leds: 20,
             max_inputs: 1,
             max_outputs: 2,
@@ -234,8 +235,9 @@ mod tests {
             app_space_features: vec![],
             firmware_version: String::new(),
             schema_format_version: 0,
+            ..schema::SchemaConstants::default()
         };
         // Should not panic
-        print_manual_template("Scarlett Solo 4th Gen", Some(&sc));
+        print_manual_template("Scarlett 4i4 4th Gen", Some(&sc));
     }
 }

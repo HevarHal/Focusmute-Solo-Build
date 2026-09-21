@@ -434,7 +434,7 @@ mod json_output_tests {
                 firmware: "2.0.2417.0".into(),
                 serial: Some("ABC123".into()),
                 path: "test://path".into(),
-                led_support: Some("hardcoded (2 inputs, 40 LEDs)".into()),
+                led_support: Some("profile: verified (2 inputs, 40 LEDs)".into()),
             }),
             microphone: Some(MicrophoneStatusJson {
                 muted: true,
@@ -571,7 +571,16 @@ mod command_tests {
                         },
                         "directLEDValues": {
                             "offset": 92,
-                            "array-shape": [40]
+                            "array-shape": [40], "notify-device": 5
+                        },
+                        "enableDirectLEDMode": {"offset": 77},
+                        "directLEDColour": {
+                            "offset": 84,
+                            "notify-device": 8
+                        },
+                        "directLEDIndex": {
+                            "offset": 88,
+                            "notify-device": 8
                         }
                     }
                 }

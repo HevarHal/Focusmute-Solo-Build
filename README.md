@@ -19,13 +19,18 @@ FocusMute monitors your system microphone's mute state and reflects it on your F
 
 | Device | Support |
 |--------|---------|
-| Scarlett 2i2 4th Gen | Full (hardcoded LED profile) |
-| Scarlett Solo / 4i4 4th Gen | Auto-discovery via firmware schema extraction |
+| Scarlett 2i2 4th Gen | Full — LED profile verified against hardware |
+| Scarlett Solo 4th Gen | LED profile from a third-party report, unverified here; the app says so at startup |
+| Scarlett 4i4 4th Gen | Auto-discovery via firmware schema extraction; run `map` to confirm the LED indices |
 | Scarlett 16i16 / 18i16 / 18i20 4th Gen | Untested — likely works on Windows; requires unimplemented FCP Socket protocol on Linux |
 
 The small 4th Gen models (Solo, 2i2, 4i4) use the TRANSACT/hwdep protocol which FocusMute fully implements. The big models (16i16, 18i16, 18i20) use a different communication path on Linux (FCP Socket via a daemon process). On Windows they likely work through the same SwRoot driver, but this is unverified without hardware.
 
-The `probe` command can detect any Scarlett 4th Gen device and extract its LED layout from firmware. Use `map` to interactively verify the predicted layout.
+The `probe` command detects any Scarlett 4th Gen device and reads its descriptor offsets and LED layout from firmware. Descriptor offsets come out exact, so the LED write path is correct on any model. LED *positions* are only predicted, from the schema's LED and input counts, and that prediction assumes the input indicators come first. That holds on the 2i2. It does not hold on the Solo, where four button LEDs precede them and every input index is four higher than predicted.
+
+The Solo therefore ships with a profile rather than relying on that prediction. Its values come from a panel sweep published by [SunsetSH/focusmute](https://github.com/SunsetSH/focusmute) and have not been reproduced on this project's hardware, so FocusMute logs a warning naming the source whenever it uses them. If a number lights on the wrong input, `map` walks the panel and tells you which index each LED really is; correcting the profile in `models.rs` is then a one-line edit. (`--output-code` prints the schema *prediction*, not your corrections, so it is a starting skeleton rather than a finished profile.)
+
+On an unprofiled device, `map` walks the panel one LED at a time so you can record what actually lights up, and `--output layout.json` saves the result. It puts the interface into direct LED mode, so replug the device when it finishes. See [docs/13](docs/13-protocol-reference.md#other-4th-gen-models) for the observed Solo map and the offsets that differ per model.
 
 ## Installation
 

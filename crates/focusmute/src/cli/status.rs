@@ -37,8 +37,12 @@ fn collect_device_status(dev: &impl ScarlettDevice) -> DeviceStatusJson {
     let ctx = DeviceContext::resolve(dev, false).ok();
     let led_support = if let Some(ref ctx) = ctx {
         if let Some(p) = ctx.profile {
+            let origin = match p.source {
+                focusmute_lib::models::ProfileSource::Verified => "verified",
+                focusmute_lib::models::ProfileSource::Reported(who) => who,
+            };
             Some(format!(
-                "hardcoded ({} inputs, {} LEDs)",
+                "profile: {origin} ({} inputs, {} LEDs)",
                 p.input_count, p.led_count
             ))
         } else if let Some(ref sc) = ctx.schema {

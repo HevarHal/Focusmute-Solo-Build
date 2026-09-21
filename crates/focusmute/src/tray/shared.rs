@@ -176,6 +176,15 @@ pub fn run_core<P: PlatformAdapter>() -> focusmute_lib::error::Result<()> {
         const MAX_SOUND_BYTES: u64 = 10_000_000;
         let mut all_warnings = parse_warnings;
         all_warnings.extend(sound_warnings);
+        // An unverified LED profile has to reach the user, not just the log.
+        if let Some(w) = state
+            .ctx
+            .as_ref()
+            .and_then(|c| c.profile)
+            .and_then(|p| p.provenance_warning())
+        {
+            all_warnings.push(w);
+        }
         let input_count = state.ctx.as_ref().and_then(|c| c.input_count());
         if let Err(errs) = state.config.validate(input_count, MAX_SOUND_BYTES) {
             for e in &errs {
@@ -544,12 +553,12 @@ fn apply_blink_action(
 ) {
     let result = match action {
         super::blink::LedAction::Solid => state.indicator.apply_mute(device),
-        super::blink::LedAction::Off => state
-            .indicator
-            .strategy()
-            .number_leds
-            .iter()
-            .try_for_each(|&led| focusmute_lib::led::set_single_led(device, led, 0)),
+        super::blink::LedAction::Off => {
+            let strategy = state.indicator.strategy();
+            strategy.number_leds.iter().try_for_each(|&led| {
+                focusmute_lib::led::set_single_led(device, &strategy.offsets, led, 0)
+            })
+        }
     };
     if let Err(e) = result {
         log::debug!("[blink] LED update failed: {e}");

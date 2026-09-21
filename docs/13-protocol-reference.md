@@ -755,6 +755,125 @@ Source: [alsa-scarlett-gui `hardware.h`](https://github.com/geoffreybennett/alsa
 | Parameter buffer addr | 0xFC |
 | MSD enable value | 0x02 |
 
+## Other 4th Gen Models
+
+Everything above describes the Scarlett 2i2 4th Gen. The rest of the family
+shares the protocol but not the numbers. Two kinds of value differ per model,
+and both are in the firmware schema, so read them from there rather than
+reusing a constant from this page.
+
+### APP_SPACE offsets are model-specific
+
+The single-LED write path (`directLEDColour` → `directLEDIndex` →
+`DATA_NOTIFY`) sits at different offsets on a device with a more compact
+APP_SPACE. Values observed on a Scarlett Solo 4th Gen (firmware 2.0.2417.0):
+
+| Member | 2i2 4th Gen | Solo 4th Gen |
+|---|---:|---:|
+| `enableDirectLEDMode` | 77 | 72 |
+| `directLEDColour` | 84 | 80 |
+| `directLEDIndex` | 88 | 84 |
+| `directLEDValues` | 92 (40 entries) | 88 (32 entries) |
+| `selectedInput` | 331 | absent |
+| `directMonitoring` | 330 | 264 |
+| `parameterValue` / `parameterChannel` | 252 / 253 | 216 / 217 |
+
+The shape is the same; only the base moves. Using the 2i2's numbers on a Solo
+writes the colour into the index field and the index into the bulk array.
+`DeviceOffsets::from_schema` resolves all of these per device.
+
+`selectedInput` being absent matters for restore: there is no active input to
+highlight, so every number LED returns to the unselected colour. Reading offset
+331 on a Solo returns an unrelated field.
+
+### `notify-device` and `notify-client` are different namespaces
+
+`notify-device` is the event ID passed to `DATA_NOTIFY` on an outgoing write.
+`notify-client` is a bit in the inbound IOCTL_NOTIFY mask. They are unrelated
+numbers for the same member and must not be substituted for one another.
+
+Inbound masks observed on a Solo, which do not match the 2i2 table above:
+
+| Control | Solo `notify-client` |
+|---|---|
+| Air | `0x00400000` |
+| Direct | `0x00800000` |
+| Inst | `0x01000000` |
+| 48V | `0x02000000` |
+| Combine Inputs | `0x04000000` |
+
+### Observed Solo 4th Gen LED map
+
+| Index | Function |
+|---:|---|
+| 0 | Air |
+| 2 | Inst |
+| 3 | 48V |
+| 4 | Input 1 number |
+| 6–11 | Input 1 halo |
+| 12 | Input 2 number |
+| 14–19 | Input 2 halo |
+| 24–25 | Output |
+| 26 | USB |
+| 27, 31 | Direct |
+
+Four button LEDs precede the input zone, so input 1's number is LED 4 rather
+than LED 0. The predictor in `layout.rs` assumes the input zone starts at index
+0, which is why its output is `Medium` confidence and why `focusmute-cli map`
+exists. The 8-LED stride per input still holds.
+
+FocusMute ships this map as a `ModelProfile` so a Solo works without a `map`
+run, marked `ProfileSource::Reported("SunsetSH/focusmute")`. That marking is
+load-bearing: it makes the app log and notify the user that these indices are
+unverified, and it is what separates this profile from the 2i2's. Its
+`button_labels` and `cache_dependent_buttons` are both empty — the first
+because the profile struct places buttons contiguously after the output halo
+and the Solo interleaves them with the input zone, the second because
+restoring those colours needs `DATA_NOTIFY(5)`.
+
+### Halos on the Solo belong to the firmware
+
+Writing a halo segment produces a brief flash and then the firmware repaints
+the actual signal level. A halo cannot hold a steady mute colour there. Only
+the number LEDs are usable as an indicator.
+
+### `DATA_NOTIFY(5)` is destructive on the Solo
+
+The bulk-array apply writes every entry of `directLEDValues`, and the zero
+entries blank independent LEDs — USB, Output, Direct and the buttons — whose
+true colour cannot be read back from the array (finding 36 above covers the
+same effect on the 2i2). There is no reliable software restore; a USB replug
+is what recovers the panel. FocusMute drives the mute indicator with
+single-LED writes only and never sends `DATA_NOTIFY(5)` during normal
+operation.
+
+### Direct Monitor on the Solo is read-only at its scalar
+
+The byte at offset 264 reads the current state, but writing it is ignored.
+State changes go through the parameter buffer: write `parameterChannel` (217)
+then `parameterValue` (216), then `DATA_NOTIFY(12)`. A three-second hold on the
+Direct button is reserved by firmware for Combine Inputs.
+
+### Provenance
+
+The Solo values in this section come from
+[SunsetSH/focusmute](https://github.com/SunsetSH/focusmute), an Apache-2.0
+derivative of this project, and from its `docs/20-ledtest.md` panel sweep. They
+have not been verified here — there is no Solo on this bench.
+
+Three caveats worth carrying. LED 12 is inferred from the stride and its
+symmetry with LED 4 rather than directly observed; the sweep recorded no
+visible change at that index, most likely because the mic was in input 2 and
+the firmware was repainting those LEDs from the live signal. The white restore
+colour is the 2i2's, tuned by eye against that panel and not re-tuned against a
+Solo. And the whole map comes from one device.
+
+Nothing loads a layout at runtime, so a wrong index here is a code change, not
+a config change. `focusmute-cli map` flashes one LED at a time and records what
+you say each one is; `--output` saves that as JSON. Note that `--output-code`
+prints a `ModelProfile` built from the schema *prediction* and does not fold in
+your corrections, so it is a skeleton to edit rather than a finished profile.
+
 ## Sources
 
 - [torvalds/linux — mixer_scarlett2.c](https://github.com/torvalds/linux/blob/master/sound/usb/mixer_scarlett2.c)
