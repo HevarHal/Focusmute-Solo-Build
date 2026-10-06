@@ -312,7 +312,7 @@ Audio Backend ---poll---> MuteIndicator ---action---> LED ops ---USB---> Device
 
 2. **State machine over callbacks.** `MuteIndicator` encapsulates debouncing and mute/unmute transitions as a pure state machine. It is decoupled from I/O -- the caller drives it by feeding mute samples and applying the resulting actions.
 
-3. **Schema-driven multi-model support.** Known devices (Scarlett 2i2 4th Gen) have hardcoded `ModelProfile`s for zero-latency startup. Unknown Scarlett 4th Gen devices are discovered at runtime by extracting the firmware schema (base64 + zlib compressed JSON) and predicting the LED layout from it.
+3. **Schema-driven multi-model support.** Known devices (Scarlett 2i2 4th Gen) have hardcoded `ModelProfiles` for zero-latency startup. Unknown Scarlett 4th Gen devices are discovered at runtime by extracting the firmware schema (base64 + zlib compressed JSON) and predicting the LED layout from it.
 
 4. **Minimal LED footprint.** Mute indication uses the single-LED update mechanism (`directLEDColour` + `directLEDIndex` + DATA_NOTIFY(8)), targeting only the number indicator LEDs ("1", "2"). Metering halos, output LEDs, and button LEDs are never touched — the device continues normal operation.
 
