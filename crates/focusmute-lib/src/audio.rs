@@ -1,4 +1,5 @@
 //! Audio mute detection — trait + Windows WASAPI backend.
+// Modified for the Scarlett Solo build; see README.md.
 
 use std::fmt;
 

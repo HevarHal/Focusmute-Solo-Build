@@ -1,5 +1,7 @@
 # Protocol Reference — Scarlett 2i2 4th Gen
 
+> Modified for the Scarlett Solo build; see the repository README.
+
 ## Summary
 
 Protocol details extracted from Geoffrey Bennett's `mixer_scarlett2.c` in the Linux kernel (`sound/usb/mixer_scarlett2.c`, ~9400 lines). This driver supports Gen 2/3/4 Scarlett, Clarett, and Vocaster devices.

@@ -4,6 +4,7 @@
 //! offsets and LED array sizes. Constructed from the firmware schema when
 //! available, or defaults to Scarlett 2i2 4th Gen hardcoded values from
 //! `protocol.rs`.
+// Modified for the Scarlett Solo build; see README.md.
 
 use crate::protocol;
 use crate::schema::SchemaConstants;

@@ -1,5 +1,7 @@
 # LED Control API Discovery - Scarlett 2i2 4th Gen
 
+> Modified for the Scarlett Solo build; see the repository README.
+
 ## Summary
 Hidden inside the GET_DEVMAP response data (USB command 0x0080000D, initially misidentified as "AUTH_2") is a **zlib-compressed JSON firmware API schema** that reveals the 4th Gen firmware has a COMPLETE LED control API. This was initially missed because:
 1. The GET_DEVMAP data appeared to be base64-encoded authentication tokens

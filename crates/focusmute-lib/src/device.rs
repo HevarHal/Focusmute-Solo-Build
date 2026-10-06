@@ -1,4 +1,5 @@
 //! Device communication — trait + Windows backend.
+// Modified for the Scarlett Solo build; see README.md.
 
 use std::fmt;
 

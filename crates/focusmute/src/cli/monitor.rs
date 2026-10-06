@@ -1,4 +1,5 @@
 //! `monitor` subcommand — run mute indicator (monitors mic mute, changes LED color).
+// Modified for the Scarlett Solo build; see README.md.
 
 use std::path::Path;
 use std::sync::atomic::Ordering;

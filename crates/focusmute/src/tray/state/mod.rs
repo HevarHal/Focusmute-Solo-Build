@@ -7,6 +7,7 @@
 //! - Hotkey management (`HotkeyState`, `register_hotkeys`, toggle + PTT)
 //! - Settings result handling (`handle_settings_result`, `SettingsChanges`)
 //! - Icon caching, autostart helpers
+// Modified for the Scarlett Solo build; see README.md.
 
 mod hotkey;
 pub(crate) mod icon;

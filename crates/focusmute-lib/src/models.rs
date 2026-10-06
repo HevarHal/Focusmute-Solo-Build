@@ -3,6 +3,7 @@
 //! Each profile defines the input/output halo LED index ranges for a
 //! specific model. Unknown models get `None` from `detect_model()`,
 //! which callers should treat as "all halos" fallback.
+// Modified for the Scarlett Solo build; see README.md.
 
 use std::ops::Range;
 

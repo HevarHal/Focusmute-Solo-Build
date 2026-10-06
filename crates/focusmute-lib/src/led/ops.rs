@@ -1,4 +1,5 @@
 //! LED device operations — single-LED mute indicator apply/clear/restore.
+// Modified for the Scarlett Solo build; see README.md.
 
 use crate::device::{Result, ScarlettDevice};
 use crate::offsets::{DeviceOffsets, MeteringGradientOffsets};

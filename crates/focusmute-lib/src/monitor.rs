@@ -4,6 +4,7 @@
 //! monitor loop: debouncing input, deciding when to apply/clear mute colors,
 //! and executing the LED writes. CLI and tray binaries become thin adapters
 //! that wire I/O sources (audio monitor, device handle) to this state machine.
+// Modified for the Scarlett Solo build; see README.md.
 
 use crate::audio::MuteDebouncer;
 use crate::device::{Result, ScarlettDevice};

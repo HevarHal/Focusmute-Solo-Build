@@ -11,6 +11,8 @@ This is a Solo-focused fork of [FocusMute](https://github.com/barnumbirr/focusmu
 
 ## Download
 
-On Windows, download and run [`focusmute.exe`](./focusmute.exe). Direct-button integration is Solo-only; other FocusMute behavior follows upstream.
+On Windows, download the `focusmute-*-windows-x86_64.zip` release and extract it. The archive contains `focusmute.exe`, `focusmute-cli.exe`, this README, and a copy of [`LICENSE`](./LICENSE). Keep the license with the executables when redistributing them. Direct-button integration is Solo-only; other FocusMute behavior follows upstream.
 
-Licensed under [Apache-2.0](./LICENSE).
+## License and notices
+
+This fork is distributed under the [Apache License 2.0](./LICENSE). Modified source and documentation files carry concise notices identifying the Solo-build changes. The original project and its notices are preserved where applicable.

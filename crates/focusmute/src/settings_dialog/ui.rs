@@ -1,4 +1,5 @@
 //! Cross-platform egui settings dialog.
+// Modified for the Scarlett Solo build; see README.md.
 
 use std::sync::{Arc, Mutex};
 

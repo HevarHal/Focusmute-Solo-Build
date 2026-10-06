@@ -1,3 +1,4 @@
+# Modified for the Scarlett Solo build; standalone Windows releases bundle LICENSE.
 name: Release
 
 on:
@@ -64,13 +65,21 @@ jobs:
       - name: Build MSI installer
         run: cargo wix -p focusmute --no-build --nocapture
 
+      - name: Create Windows standalone bundle
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          $bundle = "focusmute-$version-windows-x86_64"
+          New-Item -ItemType Directory -Path $bundle | Out-Null
+          Copy-Item target/release/focusmute.exe, target/release/focusmute-cli.exe, LICENSE, README.md -Destination $bundle
+          Compress-Archive -Path "$bundle/*" -DestinationPath "$bundle.zip" -CompressionLevel Optimal
+
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v7
         with:
           name: windows-release
           path: |
-            target/release/focusmute.exe
-            target/release/focusmute-cli.exe
+            focusmute-*-windows-x86_64.zip
             target/wix/*.msi
 
   release-linux:
@@ -139,7 +148,7 @@ jobs:
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v2
         with:
           files: |
-            artifacts/windows-release/**/*.exe
+            artifacts/windows-release/**/*.zip
             artifacts/windows-release/**/*.msi
             artifacts/linux-release/**/*.deb
             artifacts/linux-release/*.tar.gz

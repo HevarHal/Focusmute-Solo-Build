@@ -1,6 +1,7 @@
 //! Shared tray event loop — extracted from the ~80% identical code in
 //! `windows.rs` and `linux.rs`. Platform-specific behavior is injected
 //! via the [`PlatformAdapter`] trait.
+// Modified for the Scarlett Solo build; see README.md.
 
 use std::cell::Cell;
 use std::sync::Arc;

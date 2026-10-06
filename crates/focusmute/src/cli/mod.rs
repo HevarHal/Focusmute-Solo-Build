@@ -1,4 +1,5 @@
 //! CLI subcommands — device info, LED control, mute monitoring.
+// Modified for the Scarlett Solo build; see README.md.
 
 mod config_cmd;
 mod descriptor;

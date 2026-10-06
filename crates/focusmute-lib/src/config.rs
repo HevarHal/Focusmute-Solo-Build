@@ -1,4 +1,5 @@
 //! Application configuration — TOML-based, platform-aware paths.
+// Modified for the Scarlett Solo build; see README.md.
 
 use std::fmt;
 use std::path::{Path, PathBuf};

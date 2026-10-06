@@ -1,4 +1,5 @@
 //! Mute strategy resolution — determines how mute indication is visualized.
+// Modified for the Scarlett Solo build; see README.md.
 
 use std::collections::HashMap;
 

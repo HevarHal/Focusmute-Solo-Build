@@ -2,6 +2,7 @@
 //!
 //! Consolidates the repeated resolution pattern used by CLI commands and the
 //! tray app: detect profile → extract schema → compute offsets → predict layout.
+// Modified for the Scarlett Solo build; see README.md.
 
 use crate::device::{DeviceError, ScarlettDevice};
 use crate::layout::{self, PredictedLayout};

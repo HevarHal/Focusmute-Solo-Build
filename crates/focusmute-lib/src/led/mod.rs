@@ -1,4 +1,5 @@
 //! LED control — single-LED update, mute indicator apply/clear/restore.
+// Modified for the Scarlett Solo build; see README.md.
 
 mod color;
 mod ops;
