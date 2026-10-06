@@ -12,7 +12,7 @@ Hidden inside the GET_DEVMAP response data (USB command 0x0080000D, initially mi
 3. Decompression revealed a JSON firmware schema with 87 descriptor fields, 17 enums, 5 structs
 4. Keyword search found: `kMAX_NUMBER_LEDS`, `directLEDColour`, `eDirectLEDModeHalosOnly`, `LEDcolors`, `eMSG_UPDATE_COLORS`
 
-> **Focusmute implementation note**: All mute modes use the single-LED update mechanism (`directLEDColour` + `directLEDIndex` + DATA_NOTIFY(8)) to color only the number indicator LEDs ("1", "2"). Metering halos and all other LEDs are never touched. The gradient (`LEDcolors[]` + DATA_NOTIFY(9)) and bulk (`directLEDValues` + DATA_NOTIFY(5)) approaches documented below were explored during development but are not used — DATA_NOTIFY(8) provides zero-side-effect updates without requiring mode changes. The button LED side effects described in the "Button LED Categories" section below only apply to full direct LED mode usage (e.g., animations), not to Focusmute's single-LED approach.
+> **FocusMute implementation note**: Number indicators use the single-LED update mechanism (`directLEDColour` + `directLEDIndex` + DATA_NOTIFY(8)). On the Scarlett Solo 4th Gen, that mechanism also colors both Direct button LED segments. Its mute indicator temporarily changes the schema-reported metering gradient (`LEDcolors[]` + DATA_NOTIFY(9)) and restores the original bytes on unmute. This leaves halos meter-driven and can affect the output halo. The bulk (`directLEDValues` + DATA_NOTIFY(5)) path is not used for mute indication.
 
 ## LED Control API
 

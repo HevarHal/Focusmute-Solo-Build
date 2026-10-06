@@ -55,7 +55,11 @@ fn monitor_setup(config: &mut Config) -> Result<MonitorCtx> {
     }
     println!("[config] Mute inputs: {mute_mode}");
 
-    let indicator = MuteIndicator::new(2, false, mute_color, strategy);
+    let mut indicator = MuteIndicator::new(2, false, mute_color, strategy);
+    indicator.set_solo_direct_leds(
+        ctx.profile
+            .is_some_and(|profile| profile.name.eq_ignore_ascii_case("Scarlett Solo 4th Gen")),
+    );
 
     Ok(MonitorCtx {
         device: Some(device),
@@ -136,7 +140,7 @@ fn monitor_teardown(mctx: &MonitorCtx) {
     println!();
     println!("Restoring LED state...");
     if let Some(ref dev) = mctx.device {
-        if let Err(e) = led::restore_on_exit(dev, mctx.indicator.strategy()) {
+        if let Err(e) = mctx.indicator.clear_mute(dev) {
             log::warn!("[device] could not restore LED state: {e}");
         }
     } else {

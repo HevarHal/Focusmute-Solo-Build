@@ -22,8 +22,8 @@ impl DeviceContext {
     /// Resolve context from a connected device.
     ///
     /// If `force_schema` is false (the common case), schema extraction is
-    /// skipped when a hardcoded profile exists — avoiding a multi-second USB
-    /// round-trip on first run with known devices.
+    /// skipped when a hardcoded profile exists, except on the Solo where the
+    /// metering-color gradient is needed for halo mute indication.
     ///
     /// Returns `Err(UnsupportedDevice)` if no profile exists and schema
     /// extraction also failed — the device cannot be operated safely.
@@ -41,7 +41,9 @@ impl DeviceContext {
     ) -> crate::error::Result<Self> {
         let profile = models::detect_model(device.info().model());
 
-        let schema = if force_schema || profile.is_none() {
+        let needs_solo_gradient =
+            profile.is_some_and(|p| p.name.eq_ignore_ascii_case("Scarlett Solo 4th Gen"));
+        let schema = if force_schema || profile.is_none() || needs_solo_gradient {
             match cache_path {
                 Some(path) => schema::extract_or_cached_at(device, path),
                 None => schema::extract_or_cached(device),
@@ -151,16 +153,15 @@ mod tests {
         // Schema extraction will fail on mock but profile is still detected
     }
 
-    /// A profile short-circuits schema extraction, so the offsets have to come
-    /// from the profile. Before profiles carried their own, every profiled
-    /// model silently inherited the 2i2's.
+    /// A Solo profile remains usable when schema extraction fails, but its
+    /// schema-only metering gradient stays unavailable in that case.
     #[test]
     fn profile_without_schema_uses_that_profiles_offsets_not_the_2i2_default() {
         let dev = mock_with_name("Scarlett Solo 4th Gen-00031337");
         let ctx = DeviceContext::resolve(&dev, false).unwrap();
         assert!(
             ctx.schema.is_none(),
-            "profile should short-circuit extraction"
+            "the mock device has no schema response"
         );
 
         let defaults = DeviceOffsets::default();
@@ -168,6 +169,7 @@ mod tests {
         assert_eq!(ctx.offsets.direct_led_index, 84);
         assert_eq!(ctx.offsets.enable_direct_led, 72);
         assert_eq!(ctx.offsets.selected_input, None);
+        assert_eq!(ctx.offsets.metering_gradient, None);
         assert_ne!(ctx.offsets.direct_led_colour, defaults.direct_led_colour);
         assert_ne!(ctx.offsets.direct_led_index, defaults.direct_led_index);
     }

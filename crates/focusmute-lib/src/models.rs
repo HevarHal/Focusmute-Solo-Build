@@ -143,6 +143,11 @@ static SCARLETT_2I2_OFFSETS: DeviceOffsets = DeviceOffsets {
     direct_led_index: protocol::OFF_DIRECT_LED_INDEX,
     direct_led_colour_notify: protocol::NOTIFY_DIRECT_LED_COLOUR,
     selected_input: Some(protocol::OFF_SELECTED_INPUT),
+    metering_gradient: Some(crate::offsets::MeteringGradientOffsets {
+        offset: 384,
+        count: 11,
+        notify: 9,
+    }),
 };
 
 static SCARLETT_2I2: ModelProfile = ModelProfile {
@@ -199,17 +204,19 @@ static SCARLETT_SOLO_OFFSETS: DeviceOffsets = DeviceOffsets {
     direct_led_colour_notify: protocol::NOTIFY_DIRECT_LED_COLOUR,
     // The Solo has no input-select control, so no number is ever "selected".
     selected_input: None,
+    // Filled from the Solo's firmware schema at startup before halo colors are used.
+    metering_gradient: None,
 };
 
 static SCARLETT_SOLO_INPUT_HALOS: [HaloRange; 2] = [
     HaloRange {
         number_led: 4,
-        segments: 6..12,
-    }, // Input 1 — instrument. Index 5 lit nothing during the sweep.
+        segments: 5..12,
+    }, // Input 1 — instrument.
     HaloRange {
         number_led: 12,
-        segments: 14..20,
-    }, // Input 2 — mic. Index 13 lit nothing during the sweep.
+        segments: 13..20,
+    }, // Input 2 — mic.
 ];
 
 static SCARLETT_SOLO: ModelProfile = ModelProfile {
@@ -349,6 +356,12 @@ mod tests {
         let profile = detect_model("Scarlett Solo 4th Gen").unwrap();
         let numbers: Vec<usize> = profile.input_halos.iter().map(|h| h.number_led).collect();
         assert_eq!(numbers, vec![4, 12]);
+        let halos: Vec<_> = profile
+            .input_halos
+            .iter()
+            .map(|h| h.segments.clone())
+            .collect();
+        assert_eq!(halos, vec![5..12, 13..20]);
         let two_i_two = detect_model("Scarlett 2i2 4th Gen").unwrap();
         let predicted: Vec<usize> = two_i_two.input_halos.iter().map(|h| h.number_led).collect();
         assert_ne!(numbers, predicted, "must not reuse the 2i2 positions");

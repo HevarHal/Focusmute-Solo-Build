@@ -2,11 +2,12 @@
 
 Hotkey mute control for Focusrite Scarlett 4th Gen interfaces.
 
-FocusMute monitors your system microphone's mute state and reflects it on your Focusrite Scarlett interface LEDs in real time. When you mute, the input number indicator LEDs ("1", "2") turn your chosen color (default: red). When you unmute, they are restored to their firmware colors (green for the selected input, white for unselected). Metering halos and all other LEDs are never touched. It runs as a system tray app on Windows and Linux with hotkey support, or as a CLI on both platforms.
+FocusMute monitors your system microphone's mute state and reflects it on your Focusrite Scarlett interface LEDs in real time. When you mute, the input number indicator LEDs ("1", "2") turn your chosen color (default: red). When you unmute, they are restored to their firmware colors (green for the selected input, white for unselected). On the Scarlett Solo 4th Gen, active halo meter segments also use the mute color while muted; the original metering gradient is restored on unmute. It runs as a system tray app on Windows and Linux with hotkey support, or as a CLI on both platforms.
 
 ## Features
 
 - Global hotkey toggle (default: Ctrl+Shift+M) and push-to-talk hotkey, with sound feedback
+- Windows Scarlett Solo 4th Gen: Direct button toggles computer mic mute; its LED follows the input indicators' mute and normal colors
 - Blink the mute indicator when you talk while muted (opt-in, configurable threshold)
 - Configurable mute color per input (any hex color or named color)
 - Auto-reconnect on device disconnect and graceful startup without device
@@ -15,12 +16,21 @@ FocusMute monitors your system microphone's mute state and reflects it on your F
 - Browser extension syncs Google Meet and Microsoft Teams mute state to LEDs ([focusmute-extension](https://github.com/barnumbirr/focusmute-extension))
 - Extensible via webhooks (HTTP POST on mute/unmute), desktop notifications, and device serial targeting
 
+## Scarlett Solo build differences from upstream
+
+This branch adds Solo 4th Gen behavior developed and tested with a Scarlett Solo:
+
+- On Windows, a press of the Solo's Direct button toggles the computer's default microphone mute. The Direct LED segments follow the configured mute color and return to their normal indicator color when unmuted.
+- Both input number LEDs follow the mute state. While muted, active input halo meter segments use the configured mute color; the original metering gradient is restored on unmute. Halos remain meter-driven, so idle segments may be dark, and changing the gradient may also affect the output halo.
+- The Solo LED profile uses the panel mapping confirmed on the project owner's device, including Input 1/2 number LEDs at indices 4/12 and their seven-segment halos.
+- Default preferences match this build: sound feedback disabled, mute/unmute sound volumes set to 0.185/0.36, and start-on-login enabled. Existing user configuration is not overwritten.
+
 ## Supported Devices
 
 | Device | Support |
 |--------|---------|
 | Scarlett 2i2 4th Gen | Full — LED profile verified against hardware |
-| Scarlett Solo 4th Gen | LED profile from a third-party report, unverified here; the app says so at startup |
+| Scarlett Solo 4th Gen | Solo profile combines a third-party report with a panel map confirmed on the project owner's device; other device/firmware combinations are unverified |
 | Scarlett 4i4 4th Gen | Auto-discovery via firmware schema extraction; run `map` to confirm the LED indices |
 | Scarlett 16i16 / 18i16 / 18i20 4th Gen | Untested — likely works on Windows; requires unimplemented FCP Socket protocol on Linux |
 
@@ -69,6 +79,8 @@ See [dist/linux/README-linux.md](dist/linux/README-linux.md) for full details an
 ### Tray App (Windows + Linux)
 
 Launch `focusmute` (or `focusmute.exe` on Windows). It sits in the system tray, monitors your mic, and updates LEDs automatically. Right-click for the menu (Status, Toggle Mute, Settings, Reconnect Device, Quit). The global hotkey (default: Ctrl+Shift+M) toggles mute. If no Scarlett device is connected at startup, the app starts in "Disconnected" mode and automatically connects when the device is plugged in. On exit, inputs are automatically unmuted and LEDs restored to their normal state. The tray app logs to `focusmute.log` in the config directory (configurable via `log_level` in settings). On startup, any config parse errors or validation warnings are shown as a desktop notification.
+
+On Windows with a Scarlett Solo 4th Gen, FocusMute listens for Direct Monitor state changes and toggles the computer microphone mute. While muted, both Direct LED segments use the configured mute color, and active input halo meter segments use that color too. The halo color remains meter-driven, so idle segments may be dark; changing the firmware gradient can also affect the output halo. FocusMute saves and restores the original gradient on unmute. The Direct segments return to their normal indicator color. This Direct-button behavior is not enabled for other models or Linux.
 
 **Linux notes:** The tray app uses GTK 3. Global hotkeys work on X11; on Wayland they may not function (use the tray menu instead).
 
@@ -120,15 +132,15 @@ hotkey = "Ctrl+Shift+M"
 push_to_talk_hotkey = ""
 
 [sound]
-sound_enabled = true
-mute_sound_volume = 1.0
-unmute_sound_volume = 1.0
+sound_enabled = false
+mute_sound_volume = 0.185
+unmute_sound_volume = 0.36
 mute_sound_path = ""
 unmute_sound_path = ""
 suppress_browser_sync_sound = true
 
 [system]
-autostart = false
+autostart = true
 device_serial = ""
 notifications_enabled = false
 log_level = "info"
@@ -149,13 +161,13 @@ on_unmute_body = ""
 | `[indicator.input_colors]` | `{}` | Per-input mute colors (TOML table, e.g. `1 = "#FF0000"`) |
 | `[keyboard].hotkey` | `"Ctrl+Shift+M"` | Global hotkey (tray app; X11 only on Linux) |
 | `[keyboard].push_to_talk_hotkey` | `""` | Hold to unmute, release to re-mute (empty = disabled) |
-| `[sound].sound_enabled` | `true` | Play sound on mute/unmute |
-| `[sound].mute_sound_volume` | `1.0` | Volume for mute sound (0.0–1.0) |
-| `[sound].unmute_sound_volume` | `1.0` | Volume for unmute sound (0.0–1.0) |
+| `[sound].sound_enabled` | `false` | Play sound on mute/unmute |
+| `[sound].mute_sound_volume` | `0.185` | Volume for mute sound (0.0–1.0) |
+| `[sound].unmute_sound_volume` | `0.36` | Volume for unmute sound (0.0–1.0) |
 | `[sound].mute_sound_path` | `""` | Custom WAV path (empty = built-in) |
 | `[sound].unmute_sound_path` | `""` | Custom WAV path (empty = built-in) |
 | `[sound].suppress_browser_sync_sound` | `true` | Skip mute/unmute beeps for changes initiated by the browser extension |
-| `[system].autostart` | `false` | Start on login (tray app) |
+| `[system].autostart` | `true` | Start on login (tray app) |
 | `[system].device_serial` | `""` | Preferred device serial (empty = auto-select first) |
 | `[system].notifications_enabled` | `false` | Show desktop notification on mute/unmute |
 | `[system].log_level` | `"info"` | Log level: error, warn, info, debug, trace |

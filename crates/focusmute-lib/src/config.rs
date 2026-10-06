@@ -90,7 +90,7 @@ impl Default for KeyboardConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SoundConfig {
     /// Play a sound when mute state changes.
-    #[serde(default = "default_true")]
+    #[serde(default = "default_sound_enabled")]
     pub sound_enabled: bool,
 
     /// Path to custom mute sound WAV file. Empty = use built-in.
@@ -101,12 +101,12 @@ pub struct SoundConfig {
     #[serde(default)]
     pub unmute_sound_path: String,
 
-    /// Volume for mute sound (0.0–1.0). Default: 1.0.
-    #[serde(default = "default_sound_volume")]
+    /// Volume for mute sound (0.0–1.0). Default: 0.185.
+    #[serde(default = "default_mute_sound_volume")]
     pub mute_sound_volume: f32,
 
-    /// Volume for unmute sound (0.0–1.0). Default: 1.0.
-    #[serde(default = "default_sound_volume")]
+    /// Volume for unmute sound (0.0–1.0). Default: 0.36.
+    #[serde(default = "default_unmute_sound_volume")]
     pub unmute_sound_volume: f32,
 
     /// Suppress sound feedback when mute state changes via browser extension sync.
@@ -118,11 +118,11 @@ pub struct SoundConfig {
 impl Default for SoundConfig {
     fn default() -> Self {
         Self {
-            sound_enabled: true,
+            sound_enabled: false,
             mute_sound_path: String::new(),
             unmute_sound_path: String::new(),
-            mute_sound_volume: default_sound_volume(),
-            unmute_sound_volume: default_sound_volume(),
+            mute_sound_volume: default_mute_sound_volume(),
+            unmute_sound_volume: default_unmute_sound_volume(),
             suppress_browser_sync_sound: true,
         }
     }
@@ -132,7 +132,7 @@ impl Default for SoundConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemConfig {
     /// Start application on login.
-    #[serde(default)]
+    #[serde(default = "default_autostart")]
     pub autostart: bool,
 
     /// Preferred device serial number. Empty = auto-select first device.
@@ -165,7 +165,7 @@ pub struct SystemConfig {
 impl Default for SystemConfig {
     fn default() -> Self {
         Self {
-            autostart: false,
+            autostart: true,
             device_serial: String::new(),
             notifications_enabled: false,
             log_level: default_log_level(),
@@ -210,8 +210,17 @@ fn default_mute_inputs() -> String {
 fn default_true() -> bool {
     true
 }
-fn default_sound_volume() -> f32 {
-    1.0
+fn default_sound_enabled() -> bool {
+    false
+}
+fn default_autostart() -> bool {
+    true
+}
+fn default_mute_sound_volume() -> f32 {
+    0.185
+}
+fn default_unmute_sound_volume() -> f32 {
+    0.36
 }
 fn default_log_level() -> String {
     "info".into()
@@ -256,9 +265,9 @@ struct LegacyConfig {
     mute_color: String,
     #[serde(default = "default_hotkey")]
     hotkey: String,
-    #[serde(default = "default_true")]
+    #[serde(default = "default_sound_enabled")]
     sound_enabled: bool,
-    #[serde(default)]
+    #[serde(default = "default_autostart")]
     autostart: bool,
     #[serde(default = "default_mute_inputs")]
     mute_inputs: String,
@@ -266,9 +275,9 @@ struct LegacyConfig {
     mute_sound_path: String,
     #[serde(default)]
     unmute_sound_path: String,
-    #[serde(default = "default_sound_volume")]
+    #[serde(default = "default_mute_sound_volume")]
     mute_sound_volume: f32,
-    #[serde(default = "default_sound_volume")]
+    #[serde(default = "default_unmute_sound_volume")]
     unmute_sound_volume: f32,
     #[serde(default)]
     device_serial: String,
@@ -755,10 +764,10 @@ mod tests {
         let c = Config::default();
         assert_eq!(c.indicator.mute_color, "#FF0000");
         assert_eq!(c.keyboard.hotkey, "Ctrl+Shift+M");
-        assert!(c.sound.sound_enabled);
-        assert_eq!(c.sound.mute_sound_volume, 1.0);
-        assert_eq!(c.sound.unmute_sound_volume, 1.0);
-        assert!(!c.system.autostart);
+        assert!(!c.sound.sound_enabled);
+        assert_eq!(c.sound.mute_sound_volume, 0.185);
+        assert_eq!(c.sound.unmute_sound_volume, 0.36);
+        assert!(c.system.autostart);
         assert_eq!(c.indicator.mute_inputs, "all");
     }
 
@@ -771,10 +780,10 @@ mod tests {
         assert_eq!(c.indicator.mute_color, "#0000FF");
         // Missing fields get defaults
         assert_eq!(c.keyboard.hotkey, "Ctrl+Shift+M");
-        assert!(c.sound.sound_enabled);
-        assert_eq!(c.sound.mute_sound_volume, 1.0);
-        assert_eq!(c.sound.unmute_sound_volume, 1.0);
-        assert!(!c.system.autostart);
+        assert!(!c.sound.sound_enabled);
+        assert_eq!(c.sound.mute_sound_volume, 0.185);
+        assert_eq!(c.sound.unmute_sound_volume, 0.36);
+        assert!(c.system.autostart);
         assert_eq!(c.indicator.mute_inputs, "all");
     }
 
@@ -783,10 +792,10 @@ mod tests {
         let c: Config = toml::from_str("").unwrap();
         assert_eq!(c.indicator.mute_color, "#FF0000");
         assert_eq!(c.keyboard.hotkey, "Ctrl+Shift+M");
-        assert!(c.sound.sound_enabled);
-        assert_eq!(c.sound.mute_sound_volume, 1.0);
-        assert_eq!(c.sound.unmute_sound_volume, 1.0);
-        assert!(!c.system.autostart);
+        assert!(!c.sound.sound_enabled);
+        assert_eq!(c.sound.mute_sound_volume, 0.185);
+        assert_eq!(c.sound.unmute_sound_volume, 0.36);
+        assert!(c.system.autostart);
         assert_eq!(c.indicator.mute_inputs, "all");
     }
 
@@ -860,8 +869,8 @@ notifications_enabled = true
         assert_eq!(c.indicator.mute_color, "#00FF00");
         assert_eq!(c.keyboard.hotkey, "F12");
         assert!(!c.sound.sound_enabled);
-        assert_eq!(c.sound.mute_sound_volume, 1.0);
-        assert_eq!(c.sound.unmute_sound_volume, 1.0);
+        assert_eq!(c.sound.mute_sound_volume, 0.185);
+        assert_eq!(c.sound.unmute_sound_volume, 0.36);
         assert!(c.system.autostart);
         assert_eq!(c.indicator.mute_inputs, "1,2");
         assert_eq!(c.sound.mute_sound_path, "/tmp/mute.wav");
@@ -1444,8 +1453,8 @@ on_unmute_command = "echo u"
         let toml_str =
             "[sound]\nsound_enabled = true\nmute_sound_path = \"\"\nunmute_sound_path = \"\"";
         let c: Config = toml::from_str(toml_str).unwrap();
-        assert_eq!(c.sound.mute_sound_volume, 1.0);
-        assert_eq!(c.sound.unmute_sound_volume, 1.0);
+        assert_eq!(c.sound.mute_sound_volume, 0.185);
+        assert_eq!(c.sound.unmute_sound_volume, 0.36);
     }
 
     #[test]
@@ -1460,8 +1469,8 @@ on_unmute_command = "echo u"
 
         let (c, warnings) = Config::load_from(&path);
         assert!(warnings.is_empty());
-        assert_eq!(c.sound.mute_sound_volume, 1.0);
-        assert_eq!(c.sound.unmute_sound_volume, 1.0);
+        assert_eq!(c.sound.mute_sound_volume, 0.185);
+        assert_eq!(c.sound.unmute_sound_volume, 0.36);
     }
 
     // ── Config::validate() ──

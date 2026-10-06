@@ -2,6 +2,7 @@
 //! `windows.rs` and `linux.rs`. Platform-specific behavior is injected
 //! via the [`PlatformAdapter`] trait.
 
+use std::cell::Cell;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::{self, Receiver};
@@ -17,6 +18,66 @@ use muda::MenuEvent;
 
 use super::state::{self, Msg, TrayResources, TrayState};
 use crate::RUNNING;
+
+// Solo 4th Gen firmware notification bit.
+const SOLO_DIRECT_MONITOR_NOTIFY_MASK: u32 = 0x0080_0000;
+const SOLO_DIRECT_MONITORING_OFFSET: u32 = 264;
+
+fn is_solo_direct_notification(model: &str, notification: &[u8]) -> bool {
+    if !model.eq_ignore_ascii_case("Scarlett Solo 4th Gen") {
+        return false;
+    }
+    let Some(mask) = notification.get(4..8) else {
+        return false;
+    };
+    u32::from_le_bytes(mask.try_into().unwrap_or_default()) & SOLO_DIRECT_MONITOR_NOTIFY_MASK != 0
+}
+
+fn next_direct_mute_state(currently_muted: bool) -> bool {
+    !currently_muted
+}
+
+fn handle_solo_direct_button(
+    device: &impl ScarlettDevice,
+    monitor: &impl MuteMonitor,
+    indicator: &mut focusmute_lib::monitor::MuteIndicator,
+    direct_state: &Cell<Option<bool>>,
+    mute_target: &Cell<bool>,
+) {
+    let current_direct = match device.get_descriptor(SOLO_DIRECT_MONITORING_OFFSET, 1) {
+        Ok(bytes) => bytes.first().copied().unwrap_or(0) != 0,
+        Err(error) => {
+            log::warn!("[direct] failed to read Direct Monitor state: {error}");
+            return;
+        }
+    };
+    if direct_state.get() == Some(current_direct) {
+        log::debug!("[direct] ignored notification without a Direct Monitor state change");
+        return;
+    }
+    direct_state.set(Some(current_direct));
+
+    let target_muted = next_direct_mute_state(mute_target.get());
+    log::info!(
+        "[direct] click → {}",
+        if target_muted { "muting" } else { "unmuting" }
+    );
+    match monitor.set_muted(target_muted) {
+        Ok(()) => {
+            mute_target.set(target_muted);
+            indicator.prime_external_transition(target_muted);
+            let led_result = if target_muted {
+                indicator.apply_mute(device)
+            } else {
+                indicator.clear_mute(device)
+            };
+            if let Err(error) = led_result {
+                log::warn!("[direct] failed to update mute indicator LEDs: {error}");
+            }
+        }
+        Err(error) => log::warn!("[direct] failed to set microphone mute state: {error}"),
+    }
+}
 
 /// Platform-specific hooks that differ between Windows and Linux.
 ///
@@ -145,6 +206,23 @@ pub fn run_core<P: PlatformAdapter>() -> focusmute_lib::error::Result<()> {
 
     // Check initial mute state
     let initial_muted = main_monitor.as_ref().is_some_and(|m| m.is_muted());
+    let mute_target = Cell::new(initial_muted);
+    let direct_state = Cell::new(device.as_ref().and_then(|dev| {
+        if !dev
+            .info()
+            .model()
+            .eq_ignore_ascii_case("Scarlett Solo 4th Gen")
+        {
+            return None;
+        }
+        match dev.get_descriptor(SOLO_DIRECT_MONITORING_OFFSET, 1) {
+            Ok(bytes) => bytes.first().map(|value| *value != 0),
+            Err(error) => {
+                log::warn!("[direct] failed to read initial Direct Monitor state: {error}");
+                None
+            }
+        }
+    }));
     log::info!(
         "[mute] initial state: {}",
         if initial_muted { "muted" } else { "live" }
@@ -251,7 +329,6 @@ pub fn run_core<P: PlatformAdapter>() -> focusmute_lib::error::Result<()> {
     let mut ptt_noop_logged = false;
     let mut browser_sync_pending = false;
     let mut blink = super::blink::BlinkState::new();
-
     loop {
         if !RUNNING.load(Ordering::SeqCst) {
             break;
@@ -282,12 +359,44 @@ pub fn run_core<P: PlatformAdapter>() -> focusmute_lib::error::Result<()> {
             }
         }
 
+        if let Some(ref dev) = device {
+            loop {
+                match dev.try_notification() {
+                    Ok(Some(notification)) => {
+                        if is_solo_direct_notification(dev.info().model(), &notification) {
+                            if let Some(monitor) = main_monitor.as_deref() {
+                                handle_solo_direct_button(
+                                    dev,
+                                    monitor,
+                                    &mut state.indicator,
+                                    &direct_state,
+                                    &mute_target,
+                                );
+                            } else {
+                                log::warn!(
+                                    "[direct] Solo Direct button event ignored — no audio mute monitor"
+                                );
+                            }
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(error) => {
+                        log::warn!("[device] notification listener stopped: {error}");
+                        break;
+                    }
+                }
+            }
+        }
+
         // 3. Drain background messages (non-blocking)
         let mut browser_mute_target: Option<bool> = None;
         loop {
             match rx.try_recv() {
                 Ok(Msg::MutePoll(muted)) => {
                     let (action, device_lost) = state.process_mute_poll(muted, device.as_ref());
+                    if matches!(action, MonitorAction::ApplyMute | MonitorAction::ClearMute) {
+                        mute_target.set(muted);
+                    }
                     if device_lost {
                         log::warn!("[device] disconnected (communication error)");
                         device = None;
@@ -355,6 +464,7 @@ pub fn run_core<P: PlatformAdapter>() -> focusmute_lib::error::Result<()> {
                 state.indicator.is_muted(),
                 &mut browser_sync_pending,
             );
+            mute_target.set(muted);
         }
 
         // 3c. Muted-talk blink — rides the ~50 ms loop wake; reads meters at
@@ -411,10 +521,12 @@ pub fn run_core<P: PlatformAdapter>() -> focusmute_lib::error::Result<()> {
         // 4. Menu events
         while let Ok(event) = menu_rx.try_recv() {
             let toggle_mute = |is_muted: bool| {
-                if let Some(ref m) = main_monitor
-                    && let Err(e) = m.set_muted(!is_muted)
-                {
-                    log::warn!("[mute] failed to toggle mute: {e}");
+                if let Some(ref m) = main_monitor {
+                    let target = !is_muted;
+                    match m.set_muted(target) {
+                        Ok(()) => mute_target.set(target),
+                        Err(e) => log::warn!("[mute] failed to toggle mute: {e}"),
+                    }
                 }
             };
             let (quit, force_reconnect) = state::handle_menu_event(
@@ -454,6 +566,8 @@ pub fn run_core<P: PlatformAdapter>() -> focusmute_lib::error::Result<()> {
                 );
                 if let Err(e) = m.set_muted(target_muted) {
                     log::warn!("[hotkey] failed to set mute state: {e}");
+                } else {
+                    mute_target.set(target_muted);
                 }
             } else if resources.hotkey.ptt_id.is_some_and(|id| event.id == id) {
                 // PTT hotkey: press = unmute (if muted), release = re-mute (if PTT activated)
@@ -465,6 +579,8 @@ pub fn run_core<P: PlatformAdapter>() -> focusmute_lib::error::Result<()> {
                             log::info!("[ptt] held → unmuting");
                             if let Err(e) = m.set_muted(false) {
                                 log::warn!("[ptt] failed to unmute: {e}");
+                            } else {
+                                mute_target.set(false);
                             }
                         } else if !ptt_noop_logged {
                             ptt_noop_logged = true;
@@ -477,6 +593,8 @@ pub fn run_core<P: PlatformAdapter>() -> focusmute_lib::error::Result<()> {
                             log::info!("[ptt] released → re-muting");
                             if let Err(e) = m.set_muted(true) {
                                 log::warn!("[ptt] failed to re-mute: {e}");
+                            } else {
+                                mute_target.set(true);
                             }
                         }
                     }
@@ -627,6 +745,107 @@ mod tests {
     use focusmute_lib::audio::AudioError;
     use std::sync::Mutex;
     use std::time::Duration;
+
+    #[test]
+    fn solo_direct_press_toggles_the_current_mute_state() {
+        assert!(next_direct_mute_state(false));
+        assert!(!next_direct_mute_state(true));
+    }
+
+    #[test]
+    fn solo_direct_notification_requires_solo_model_and_direct_event_bit() {
+        let mut notification = [0u8; 16];
+        notification[4..8].copy_from_slice(&SOLO_DIRECT_MONITOR_NOTIFY_MASK.to_le_bytes());
+        assert!(is_solo_direct_notification(
+            "Scarlett Solo 4th Gen",
+            &notification
+        ));
+        assert!(!is_solo_direct_notification(
+            "Scarlett 2i2 4th Gen",
+            &notification
+        ));
+        assert!(!is_solo_direct_notification(
+            "Scarlett Solo 4th Gen",
+            &[0; 7]
+        ));
+    }
+
+    #[test]
+    fn solo_direct_handler_toggles_once_per_hardware_state_change() {
+        use focusmute_lib::device::mock::MockDevice;
+        use focusmute_lib::led::MuteStrategy;
+        use focusmute_lib::monitor::MuteIndicator;
+
+        let device = MockDevice::new();
+        device
+            .set_descriptor(SOLO_DIRECT_MONITORING_OFFSET, &[1])
+            .unwrap();
+        let monitor = LaggyMonitor::new(false);
+        let strategy = MuteStrategy {
+            input_indices: vec![0, 1],
+            number_leds: vec![4, 12],
+            mute_colors: vec![],
+            selected_color: 0xAAFF_DD00,
+            unselected_color: 0xAAFF_DD00,
+            offsets: focusmute_lib::offsets::DeviceOffsets {
+                direct_led_colour: 80,
+                direct_led_index: 84,
+                direct_led_values: 88,
+                direct_led_count: 32,
+                selected_input: None,
+                ..Default::default()
+            },
+        };
+        let mut indicator = MuteIndicator::new(2, false, 0xFF00_0000, strategy);
+        indicator.set_solo_direct_leds(true);
+        let direct_state = Cell::new(Some(false));
+        let mute_target = Cell::new(false);
+
+        handle_solo_direct_button(
+            &device,
+            &monitor,
+            &mut indicator,
+            &direct_state,
+            &mute_target,
+        );
+        handle_solo_direct_button(
+            &device,
+            &monitor,
+            &mut indicator,
+            &direct_state,
+            &mute_target,
+        );
+        assert_eq!(monitor.calls(), vec![true]);
+        assert!(mute_target.get());
+        {
+            let descriptors = device.descriptors.borrow();
+            assert_eq!(
+                descriptors.get(&80),
+                Some(&0xFF00_0000u32.to_le_bytes().to_vec()),
+                "Direct-button mute should paint the LEDs before the audio poll"
+            );
+            assert_eq!(descriptors.get(&84), Some(&vec![31]),);
+        }
+
+        device
+            .set_descriptor(SOLO_DIRECT_MONITORING_OFFSET, &[0])
+            .unwrap();
+        handle_solo_direct_button(
+            &device,
+            &monitor,
+            &mut indicator,
+            &direct_state,
+            &mute_target,
+        );
+        assert_eq!(monitor.calls(), vec![true, false]);
+        assert!(!mute_target.get());
+        let descriptors = device.descriptors.borrow();
+        assert_eq!(
+            descriptors.get(&80),
+            Some(&0xAAFF_DD00u32.to_le_bytes().to_vec()),
+            "Direct-button unmute should restore the normal LED color immediately"
+        );
+    }
 
     /// Monitor that models the WASAPI backend's callback-cached state:
     /// `is_muted()` keeps returning the construction-time snapshot no matter

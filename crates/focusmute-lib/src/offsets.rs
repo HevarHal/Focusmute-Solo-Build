@@ -8,6 +8,14 @@
 use crate::protocol;
 use crate::schema::SchemaConstants;
 
+/// Firmware metering-color gradient descriptor details.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MeteringGradientOffsets {
+    pub offset: u32,
+    pub count: usize,
+    pub notify: u32,
+}
+
 /// Descriptor offsets and LED counts for a specific device model.
 ///
 /// These values are either extracted from the firmware schema or
@@ -32,6 +40,8 @@ pub struct DeviceOffsets {
     /// control. `None` means number-LED restore cannot distinguish a selected
     /// input and must use the unselected colour for every number.
     pub selected_input: Option<u32>,
+    /// LEDcolors gradient controls the firmware-driven halo metering colors.
+    pub metering_gradient: Option<MeteringGradientOffsets>,
 }
 
 /// Treat zero as absent, for both descriptor offsets and DATA_NOTIFY event
@@ -83,6 +93,14 @@ impl DeviceOffsets {
                 "directLEDColour notify-device",
             ),
             selected_input: sc.selected_input_offset,
+            metering_gradient: (sc.gradient_offset != 0
+                && sc.gradient_count > 1
+                && sc.gradient_notify != 0)
+                .then_some(MeteringGradientOffsets {
+                    offset: sc.gradient_offset,
+                    count: sc.gradient_count,
+                    notify: sc.gradient_notify,
+                }),
         }
     }
 
@@ -104,6 +122,11 @@ impl Default for DeviceOffsets {
             direct_led_index: protocol::OFF_DIRECT_LED_INDEX,
             direct_led_colour_notify: protocol::NOTIFY_DIRECT_LED_COLOUR,
             selected_input: Some(protocol::OFF_SELECTED_INPUT),
+            metering_gradient: Some(MeteringGradientOffsets {
+                offset: 384,
+                count: 11,
+                notify: 9,
+            }),
         }
     }
 }
@@ -203,6 +226,7 @@ mod tests {
         assert_eq!(from_schema.direct_led_notify, default.direct_led_notify);
         assert_eq!(from_schema.direct_led_colour, default.direct_led_colour);
         assert_eq!(from_schema.direct_led_index, default.direct_led_index);
+        assert_eq!(from_schema.metering_gradient, default.metering_gradient);
         assert_eq!(
             from_schema.direct_led_colour_notify,
             default.direct_led_colour_notify
@@ -227,6 +251,9 @@ mod tests {
             direct_led_index_offset: 84,
             direct_led_colour_notify: 8,
             selected_input_offset: None,
+            gradient_count: 11,
+            gradient_offset: 384,
+            gradient_notify: 9,
             ..SchemaConstants::default()
         };
         let offsets = DeviceOffsets::from_schema(&sc);
@@ -239,6 +266,14 @@ mod tests {
         // The colour field must not land on the 2i2's index field.
         assert_ne!(offsets.direct_led_colour, default.direct_led_index);
         assert_eq!(offsets.selected_input, None);
+        assert_eq!(
+            offsets.metering_gradient,
+            Some(MeteringGradientOffsets {
+                offset: 384,
+                count: 11,
+                notify: 9,
+            })
+        );
     }
 
     /// Extraction rejects a schema missing these members, so a zero can only

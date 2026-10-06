@@ -478,6 +478,17 @@ impl MuteDebouncer {
         None
     }
 
+    /// Count an authoritative external mute event as the first stable sample.
+    pub fn prime_transition(&mut self, muted: bool) {
+        if muted != self.current {
+            self.pending = muted;
+            self.stable = 1;
+        } else {
+            self.pending = self.current;
+            self.stable = 0;
+        }
+    }
+
     /// Current confirmed mute state.
     pub fn is_muted(&self) -> bool {
         self.current
@@ -560,6 +571,14 @@ mod tests {
         // Third consecutive poll triggers
         assert_eq!(d.update(true), Some(true));
         assert!(d.is_muted());
+    }
+
+    #[test]
+    fn debouncer_prime_counts_as_first_stable_sample() {
+        let mut debouncer = MuteDebouncer::new(2, false);
+        debouncer.prime_transition(true);
+        assert_eq!(debouncer.update(true), Some(true));
+        assert!(debouncer.is_muted());
     }
 
     #[test]

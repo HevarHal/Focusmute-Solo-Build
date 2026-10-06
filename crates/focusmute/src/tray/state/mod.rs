@@ -157,7 +157,11 @@ impl TrayState {
             log::warn!("[config] {w}");
         }
 
-        let indicator = MuteIndicator::new(2, false, init_mute_color, strategy);
+        let mut indicator = MuteIndicator::new(2, false, init_mute_color, strategy);
+        indicator.set_solo_direct_leds(
+            ctx.profile
+                .is_some_and(|profile| profile.name.eq_ignore_ascii_case("Scarlett Solo 4th Gen")),
+        );
 
         Ok(TrayState {
             config,
@@ -207,6 +211,10 @@ impl TrayState {
         }
 
         self.indicator.set_strategy(strategy);
+        self.indicator.set_solo_direct_leds(
+            ctx.profile
+                .is_some_and(|profile| profile.name.eq_ignore_ascii_case("Scarlett Solo 4th Gen")),
+        );
         self.ctx = Some(ctx);
         Ok(warnings)
     }
@@ -386,7 +394,7 @@ impl TrayState {
 
     /// Restore LED state on exit.
     pub fn restore_on_exit(&self, device: &impl ScarlettDevice) {
-        if let Err(e) = led::restore_on_exit(device, self.indicator.strategy()) {
+        if let Err(e) = self.indicator.clear_mute(device) {
             log::warn!("[device] could not restore LED state: {e}");
         }
     }
@@ -491,7 +499,7 @@ mod tests {
         let dev = make_mock_device();
         let state = TrayState::init_with_config(Config::default(), &dev).unwrap();
         assert!(!state.indicator.is_muted());
-        assert!(state.config.sound.sound_enabled); // Default config has sound_enabled=true
+        assert!(!state.config.sound.sound_enabled); // Default config disables sound feedback
         assert_eq!(state.config.indicator.mute_color, "#FF0000");
     }
 
@@ -534,12 +542,12 @@ mod tests {
     fn apply_config_updates_sound() {
         let dev = make_mock_device();
         let mut state = TrayState::init_with_config(Config::default(), &dev).unwrap();
-        assert!(state.config.sound.sound_enabled);
+        assert!(!state.config.sound.sound_enabled);
 
         let mut new_config = state.config.clone();
-        new_config.sound.sound_enabled = false;
+        new_config.sound.sound_enabled = true;
         state.apply_config(new_config, Some(&dev));
-        assert!(!state.config.sound.sound_enabled);
+        assert!(state.config.sound.sound_enabled);
     }
 
     #[test]
@@ -719,15 +727,15 @@ mod tests {
         let dev = make_mock_device();
         let mut state = TrayState::init_with_config(Config::default(), &dev).unwrap();
 
-        // Default is sound_enabled=true
-        assert!(state.config.sound.sound_enabled);
+        // Default is sound_enabled=false
+        assert!(!state.config.sound.sound_enabled);
 
         // Simulate the sound toggle action from handle_menu_event
         state.config.sound.sound_enabled = !state.config.sound.sound_enabled;
         // (save() would write to disk — we just verify the in-memory state)
 
         assert!(
-            !state.config.sound.sound_enabled,
+            state.config.sound.sound_enabled,
             "config should reflect toggled state"
         );
     }

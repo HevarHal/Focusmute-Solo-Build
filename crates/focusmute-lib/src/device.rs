@@ -153,6 +153,12 @@ pub trait ScarlettDevice {
         ))
     }
 
+    /// Return the next notification received by a background listener, if any.
+    /// Platforms without an asynchronous notification listener return `None`.
+    fn try_notification(&self) -> Result<Option<Vec<u8>>> {
+        Ok(None)
+    }
+
     /// Send a raw IOCTL (bypassing TRANSACT framing).
     /// Default: not supported on this platform.
     fn raw_ioctl(&self, _code: u32, _input: &[u8], _out_size: usize) -> Result<Vec<u8>> {
@@ -500,6 +506,9 @@ mod windows_impl {
         token: u64,
         /// Channel to the dedicated I/O worker thread.
         io_tx: std::sync::mpsc::Sender<IoctlRequest>,
+        notification_rx: std::sync::mpsc::Receiver<std::result::Result<Vec<u8>, String>>,
+        notification_stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        notification_worker: Option<std::thread::JoinHandle<()>>,
     }
 
     // HANDLE is Send-safe for our usage (single-owner, sync I/O pattern)
@@ -527,6 +536,38 @@ mod windows_impl {
                 }
             });
             tx
+        }
+
+        fn spawn_notification_worker(
+            handle: HANDLE,
+            stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+            tx: std::sync::mpsc::Sender<std::result::Result<Vec<u8>, String>>,
+        ) -> std::thread::JoinHandle<()> {
+            const TIMEOUT_MS: u32 = 250;
+            let handle_value = handle.0 as usize;
+            std::thread::spawn(move || {
+                let handle = HANDLE(handle_value as *mut _);
+                while !stop.load(std::sync::atomic::Ordering::SeqCst) {
+                    match ioctl_impl(
+                        handle,
+                        IOCTL_NOTIFY,
+                        &[],
+                        16,
+                        WaitStrategy::OverlappedTimeout(TIMEOUT_MS),
+                    ) {
+                        Ok(notification) => {
+                            if tx.send(Ok(notification)).is_err() {
+                                break;
+                            }
+                        }
+                        Err(error) if error == format!("IOCTL timed out after {TIMEOUT_MS}ms") => {}
+                        Err(error) => {
+                            let _ = tx.send(Err(error));
+                            break;
+                        }
+                    }
+                }
+            })
         }
 
         /// Send an IOCTL via the dedicated I/O worker thread with a 5-second timeout.
@@ -694,6 +735,8 @@ mod windows_impl {
 
             // Wrap handle in RAII wrapper — OwnedHandle::drop will call CloseHandle
             let handle = OwnedHandle::new(raw_handle);
+            let (notification_tx, notification_rx) = std::sync::mpsc::channel();
+            let notification_stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
             // Create device with worker thread ready
             let mut dev = WindowsDevice {
@@ -708,6 +751,9 @@ mod windows_impl {
                 },
                 token,
                 io_tx,
+                notification_rx,
+                notification_stop,
+                notification_worker: None,
             };
 
             // Read firmware version from descriptor header (offset 0, 16 bytes)
@@ -723,6 +769,18 @@ mod windows_impl {
             // Read device name from descriptor (offset 16, 32 bytes)
             if let Ok(name_bytes) = dev.get_descriptor(16, 32) {
                 dev.info.device_name = parse_device_name(&name_bytes);
+            }
+
+            if dev
+                .info
+                .model()
+                .eq_ignore_ascii_case("Scarlett Solo 4th Gen")
+            {
+                dev.notification_worker = Some(Self::spawn_notification_worker(
+                    dev.handle.as_raw(),
+                    std::sync::Arc::clone(&dev.notification_stop),
+                    notification_tx,
+                ));
             }
 
             Ok(dev)
@@ -780,13 +838,32 @@ mod windows_impl {
             .map_err(DeviceError::TransactFailed)
         }
 
+        fn try_notification(&self) -> Result<Option<Vec<u8>>> {
+            match self.notification_rx.try_recv() {
+                Ok(Ok(notification)) => Ok(Some(notification)),
+                Ok(Err(error)) => Err(DeviceError::TransactFailed(error)),
+                Err(std::sync::mpsc::TryRecvError::Empty)
+                | Err(std::sync::mpsc::TryRecvError::Disconnected) => Ok(None),
+            }
+        }
+
         fn raw_ioctl(&self, code: u32, input: &[u8], out_size: usize) -> Result<Vec<u8>> {
             self.ioctl_async(code, input, out_size)
                 .map_err(DeviceError::TransactFailed)
         }
     }
 
-    // OwnedHandle::drop calls CloseHandle automatically — no manual Drop needed.
+    impl Drop for WindowsDevice {
+        fn drop(&mut self) {
+            self.notification_stop
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            if let Some(worker) = self.notification_worker.take() {
+                let _ = worker.join();
+            }
+        }
+    }
+
+    // OwnedHandle::drop calls CloseHandle automatically.
 }
 
 #[cfg(windows)]

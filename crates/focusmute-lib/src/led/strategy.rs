@@ -288,7 +288,7 @@ mod tests {
     // ── resolve_mute_strategy ──
 
     /// A reported profile resolves like any other, but never silently: the
-    /// warning is the only thing telling the user these indices are unverified.
+    /// warning identifies that its profile data still needs hardware validation.
     #[test]
     fn a_reported_profile_resolves_and_warns() {
         let profile = models::detect_model("Scarlett Solo 4th Gen").unwrap();

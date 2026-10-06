@@ -8,6 +8,9 @@
 use crate::audio::MuteDebouncer;
 use crate::device::{Result, ScarlettDevice};
 use crate::led;
+use std::cell::RefCell;
+
+const SOLO_DIRECT_LED_INDICES: [u8; 2] = [27, 31];
 
 /// Action to take after a mute-state update.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,6 +32,8 @@ pub struct MuteIndicator {
     debouncer: MuteDebouncer,
     mute_color: u32,
     strategy: led::MuteStrategy,
+    solo_direct_leds: bool,
+    saved_solo_gradient: RefCell<Option<Vec<u8>>>,
 }
 
 impl MuteIndicator {
@@ -44,6 +49,8 @@ impl MuteIndicator {
             debouncer: MuteDebouncer::new(debounce_threshold, initial_muted),
             mute_color,
             strategy,
+            solo_direct_leds: false,
+            saved_solo_gradient: RefCell::new(None),
         }
     }
 
@@ -58,12 +65,31 @@ impl MuteIndicator {
 
     /// Apply the mute indicator to the device.
     pub fn apply_mute(&self, device: &impl ScarlettDevice) -> Result<()> {
-        led::apply_mute_indicator(device, &self.strategy, self.mute_color)
+        led::apply_mute_indicator(device, &self.strategy, self.mute_color)?;
+        if self.solo_direct_leds {
+            for index in SOLO_DIRECT_LED_INDICES {
+                led::set_single_led(device, &self.strategy.offsets, index, self.mute_color)?;
+            }
+            self.apply_solo_halo_gradient(device)?;
+        }
+        Ok(())
     }
 
     /// Clear the mute indicator and restore normal LED state.
     pub fn clear_mute(&self, device: &impl ScarlettDevice) -> Result<()> {
-        led::clear_mute_indicator(device, &self.strategy)
+        led::clear_mute_indicator(device, &self.strategy)?;
+        if self.solo_direct_leds {
+            self.restore_solo_halo_gradient(device)?;
+            for index in SOLO_DIRECT_LED_INDICES {
+                led::set_single_led(
+                    device,
+                    &self.strategy.offsets,
+                    index,
+                    self.strategy.unselected_color,
+                )?;
+            }
+        }
+        Ok(())
     }
 
     /// Whether the debouncer currently considers the mic muted.
@@ -91,6 +117,47 @@ impl MuteIndicator {
         self.strategy = strategy;
     }
 
+    pub fn set_solo_direct_leds(&mut self, enabled: bool) {
+        self.solo_direct_leds = enabled;
+        if enabled && self.strategy.offsets.metering_gradient.is_none() {
+            log::warn!(
+                "[led] Solo halo mute colors are unavailable because the firmware gradient could not be read from schema"
+            );
+        }
+    }
+
+    fn apply_solo_halo_gradient(&self, device: &impl ScarlettDevice) -> Result<()> {
+        let Some(gradient) = self.strategy.offsets.metering_gradient else {
+            return Ok(());
+        };
+        let mut saved = self.saved_solo_gradient.borrow_mut();
+        if saved.is_none() {
+            *saved = Some(led::read_metering_gradient(device, gradient)?);
+        }
+        let Some(original) = saved.as_ref() else {
+            return Err(crate::device::DeviceError::TransactFailed(
+                "metering gradient was not saved before applying mute color".into(),
+            ));
+        };
+        let mut colors = original.clone();
+        for color in colors.chunks_exact_mut(std::mem::size_of::<u32>()).skip(1) {
+            color.copy_from_slice(&self.mute_color.to_le_bytes());
+        }
+        led::write_metering_gradient(device, gradient, &colors)
+    }
+
+    fn restore_solo_halo_gradient(&self, device: &impl ScarlettDevice) -> Result<()> {
+        let Some(gradient) = self.strategy.offsets.metering_gradient else {
+            return Ok(());
+        };
+        let mut saved = self.saved_solo_gradient.borrow_mut();
+        if let Some(original) = saved.as_ref() {
+            led::write_metering_gradient(device, gradient, original)?;
+            *saved = None;
+        }
+        Ok(())
+    }
+
     /// Force the debouncer's confirmed state without triggering a state-change event.
     ///
     /// Use this when the mute state is known from an authoritative source (e.g.
@@ -98,6 +165,13 @@ impl MuteIndicator {
     /// the forced state will return `NoChange` instead of `ApplyMute`/`ClearMute`.
     pub fn force_state(&mut self, muted: bool) {
         self.debouncer.force_state(muted);
+    }
+
+    /// Use a hardware button event as the first debounce sample without
+    /// applying LEDs immediately; the next matching audio poll performs the
+    /// single normal LED update.
+    pub fn prime_external_transition(&mut self, muted: bool) {
+        self.debouncer.prime_transition(muted);
     }
 
     /// Feed a raw mute poll and apply the resulting action to the device.
@@ -212,6 +286,55 @@ mod tests {
     }
 
     #[test]
+    fn solo_direct_led_follows_input_mute_color_and_restore_color() {
+        let mut indicator = make_indicator(false);
+        indicator.set_solo_direct_leds(true);
+        indicator.set_mute_color(0x0000_FF00);
+        let device = MockDevice::new();
+        let original_gradient: Vec<u8> = (0..44).map(|byte| byte as u8).collect();
+        device
+            .set_descriptor(384, &original_gradient)
+            .expect("seed the original metering gradient");
+
+        indicator.apply_mute(&device).unwrap();
+        let descriptors = device.descriptors.borrow();
+        assert_eq!(
+            descriptors.get(&OFF_DIRECT_LED_COLOUR).unwrap(),
+            &0x0000_FF00u32.to_le_bytes(),
+            "Direct LED should use the current configured mute color"
+        );
+        assert_eq!(descriptors.get(&OFF_DIRECT_LED_INDEX).unwrap(), &[31]);
+        let muted_gradient = descriptors.get(&384).unwrap();
+        assert_eq!(&muted_gradient[..4], &original_gradient[..4]);
+        assert!(
+            muted_gradient[4..]
+                .chunks_exact(4)
+                .all(|color| color == [0, 255, 0, 0])
+        );
+        drop(descriptors);
+
+        indicator.clear_mute(&device).unwrap();
+        let descriptors = device.descriptors.borrow();
+        assert_eq!(
+            descriptors.get(&OFF_DIRECT_LED_COLOUR).unwrap(),
+            &0x88FF_FF00u32.to_le_bytes(),
+            "Direct LED should use the same restore color as the input LEDs"
+        );
+        assert_eq!(descriptors.get(&OFF_DIRECT_LED_INDEX).unwrap(), &[31]);
+        assert_eq!(descriptors.get(&384).unwrap(), &original_gradient);
+        assert_eq!(
+            device
+                .notifies
+                .borrow()
+                .iter()
+                .filter(|&&event| event == 9)
+                .count(),
+            2,
+            "mute and unmute should each activate the metering gradient"
+        );
+    }
+
+    #[test]
     fn clear_mute_restores_number_leds() {
         let ind = make_indicator(true);
         let dev = MockDevice::new();
@@ -269,6 +392,24 @@ mod tests {
         // Verify LED was written
         let descs = dev.descriptors.borrow();
         assert!(descs.contains_key(&OFF_DIRECT_LED_COLOUR));
+    }
+
+    #[test]
+    fn primed_external_mute_applies_led_once_on_next_poll() {
+        let mut ind = make_indicator(false);
+        let dev = MockDevice::new();
+
+        ind.prime_external_transition(true);
+        assert!(dev.descriptors.borrow().is_empty());
+
+        let (action, err) = ind.poll_and_apply(true, &dev);
+        assert_eq!(action, MonitorAction::ApplyMute);
+        assert!(err.is_none());
+        assert_eq!(
+            dev.notifies.borrow().as_slice(),
+            &[NOTIFY_DIRECT_LED_COLOUR, NOTIFY_DIRECT_LED_COLOUR],
+            "the input LED should be written only through the normal poll path"
+        );
     }
 
     #[test]

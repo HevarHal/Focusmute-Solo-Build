@@ -1,7 +1,7 @@
 //! LED device operations — single-LED mute indicator apply/clear/restore.
 
 use crate::device::{Result, ScarlettDevice};
-use crate::offsets::DeviceOffsets;
+use crate::offsets::{DeviceOffsets, MeteringGradientOffsets};
 
 use super::strategy::MuteStrategy;
 
@@ -27,6 +27,55 @@ pub fn set_single_led(
     device.set_descriptor(offsets.direct_led_colour, &color.to_le_bytes())?;
     device.set_descriptor(offsets.direct_led_index, &[index])?;
     device.data_notify(offsets.direct_led_colour_notify)?;
+    Ok(())
+}
+
+/// Read the firmware's current halo metering-color gradient.
+pub fn read_metering_gradient(
+    device: &impl ScarlettDevice,
+    gradient: MeteringGradientOffsets,
+) -> Result<Vec<u8>> {
+    let size = gradient
+        .count
+        .checked_mul(std::mem::size_of::<u32>())
+        .and_then(|size| u32::try_from(size).ok())
+        .ok_or_else(|| {
+            crate::device::DeviceError::TransactFailed(
+                "metering gradient size exceeds descriptor limits".into(),
+            )
+        })?;
+    let bytes = device.get_descriptor(gradient.offset, size)?;
+    if bytes.len() != size as usize {
+        return Err(crate::device::DeviceError::TransactFailed(format!(
+            "metering gradient read returned {} bytes, expected {size}",
+            bytes.len()
+        )));
+    }
+    Ok(bytes)
+}
+
+/// Write the firmware's halo metering-color gradient and activate it.
+pub fn write_metering_gradient(
+    device: &impl ScarlettDevice,
+    gradient: MeteringGradientOffsets,
+    bytes: &[u8],
+) -> Result<()> {
+    let expected_size = gradient
+        .count
+        .checked_mul(std::mem::size_of::<u32>())
+        .ok_or_else(|| {
+            crate::device::DeviceError::TransactFailed(
+                "metering gradient size exceeds descriptor limits".into(),
+            )
+        })?;
+    if bytes.len() != expected_size {
+        return Err(crate::device::DeviceError::TransactFailed(format!(
+            "metering gradient write has {} bytes, expected {expected_size}",
+            bytes.len()
+        )));
+    }
+    device.set_descriptor(gradient.offset, bytes)?;
+    device.data_notify(gradient.notify)?;
     Ok(())
 }
 
@@ -272,6 +321,36 @@ mod tests {
         let descs = dev.descriptors.borrow();
         assert!(!descs.contains_key(&OFF_ENABLE_DIRECT_LED));
         assert!(!descs.contains_key(&OFF_DIRECT_LED_VALUES));
+    }
+
+    #[test]
+    fn metering_gradient_read_and_write_preserve_exact_bytes() {
+        let dev = MockDevice::new();
+        let gradient = MeteringGradientOffsets {
+            offset: 384,
+            count: 3,
+            notify: 9,
+        };
+        let original = [
+            0x10, 0x20, 0x30, 0x00, 0x40, 0x50, 0x60, 0x00, 0x70, 0x80, 0x90, 0x00,
+        ];
+        dev.set_descriptor(gradient.offset, &original).unwrap();
+        assert_eq!(read_metering_gradient(&dev, gradient).unwrap(), original);
+
+        let muted = [0x10, 0x20, 0x30, 0x00, 1, 2, 3, 0, 4, 5, 6, 0];
+        write_metering_gradient(&dev, gradient, &muted).unwrap();
+        assert_eq!(
+            dev.descriptors.borrow().get(&gradient.offset).unwrap(),
+            &muted
+        );
+        assert_eq!(dev.notifies.borrow().as_slice(), &[9]);
+
+        write_metering_gradient(&dev, gradient, &original).unwrap();
+        assert_eq!(
+            dev.descriptors.borrow().get(&gradient.offset).unwrap(),
+            &original
+        );
+        assert_eq!(dev.notifies.borrow().as_slice(), &[9, 9]);
     }
 
     // ── apply_mute_indicator ──

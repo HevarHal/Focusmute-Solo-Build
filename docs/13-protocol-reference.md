@@ -807,12 +807,14 @@ Inbound masks observed on a Solo, which do not match the 2i2 table above:
 | Index | Function |
 |---:|---|
 | 0 | Air |
+| 1 | Unknown |
 | 2 | Inst |
 | 3 | 48V |
 | 4 | Input 1 number |
-| 6–11 | Input 1 halo |
+| 5–11 | Input 1 halo |
 | 12 | Input 2 number |
-| 14–19 | Input 2 halo |
+| 13–19 | Input 2 halo |
+| 20–23 | Unknown |
 | 24–25 | Output |
 | 26 | USB |
 | 27, 31 | Direct |
@@ -820,22 +822,33 @@ Inbound masks observed on a Solo, which do not match the 2i2 table above:
 Four button LEDs precede the input zone, so input 1's number is LED 4 rather
 than LED 0. The predictor in `layout.rs` assumes the input zone starts at index
 0, which is why its output is `Medium` confidence and why `focusmute-cli map`
-exists. The 8-LED stride per input still holds.
+exists. The Solo map provided for this project confirms that each input halo has
+seven segments, with number LEDs at 4 and 12.
 
 FocusMute ships this map as a `ModelProfile` so a Solo works without a `map`
 run, marked `ProfileSource::Reported("SunsetSH/focusmute")`. That marking is
-load-bearing: it makes the app log and notify the user that these indices are
-unverified, and it is what separates this profile from the 2i2's. Its
+load-bearing: it makes the app log and notify the user that profile details
+beyond the confirmed LED positions remain unverified, and it is what separates
+this profile from the 2i2's. Its
 `button_labels` and `cache_dependent_buttons` are both empty — the first
 because the profile struct places buttons contiguously after the output halo
 and the Solo interleaves them with the input zone, the second because
 restoring those colours needs `DATA_NOTIFY(5)`.
 
+FocusMute also targets the two Direct button LED segments (27 and 31) with
+single-LED writes: it applies the configured mute color and restores the same
+normal color used by the input-number indicators on unmute. The firmware still
+handles the Direct Monitor function itself.
+
 ### Halos on the Solo belong to the firmware
 
 Writing a halo segment produces a brief flash and then the firmware repaints
-the actual signal level. A halo cannot hold a steady mute colour there. Only
-the number LEDs are usable as an indicator.
+the actual signal level. FocusMute therefore does not use single-LED writes
+for halo mute indication. On mute it temporarily changes the firmware's
+metering gradient (`LEDcolors`) to the configured mute color for active meter
+segments, saving and restoring the original gradient on unmute. The halos
+remain meter-driven (idle segments may be dark), and the gradient may affect
+the output halo as well.
 
 ### `DATA_NOTIFY(5)` is destructive on the Solo
 
@@ -843,9 +856,8 @@ The bulk-array apply writes every entry of `directLEDValues`, and the zero
 entries blank independent LEDs — USB, Output, Direct and the buttons — whose
 true colour cannot be read back from the array (finding 36 above covers the
 same effect on the 2i2). There is no reliable software restore; a USB replug
-is what recovers the panel. FocusMute drives the mute indicator with
-single-LED writes only and never sends `DATA_NOTIFY(5)` during normal
-operation.
+is what recovers the panel. FocusMute never sends `DATA_NOTIFY(5)` for the
+Solo mute indicator.
 
 ### Direct Monitor on the Solo is read-only at its scalar
 

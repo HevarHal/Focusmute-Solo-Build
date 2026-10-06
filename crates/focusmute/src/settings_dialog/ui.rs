@@ -906,11 +906,11 @@ mod tests {
             browser_sync_reverse: false,
             blink_on_talk: false,
             talk_threshold: 250,
-            sound_enabled: true,
+            sound_enabled: false,
             suppress_browser_sync_sound: true,
-            mute_sound_volume: 1.0,
-            unmute_sound_volume: 1.0,
-            autostart: false,
+            mute_sound_volume: 0.185,
+            unmute_sound_volume: 0.36,
+            autostart: true,
             notifications_enabled: false,
             log_level: "info",
             mute_inputs_index: 0,
@@ -933,10 +933,10 @@ mod tests {
         let config = build_and_validate_config(&default_test_params(&orig)).expect("should be Ok");
         assert_eq!(config.indicator.mute_color, "#FF0000");
         assert_eq!(config.keyboard.hotkey, "Ctrl+Shift+M");
-        assert!(config.sound.sound_enabled);
-        assert_eq!(config.sound.mute_sound_volume, 1.0);
-        assert_eq!(config.sound.unmute_sound_volume, 1.0);
-        assert!(!config.system.autostart);
+        assert!(!config.sound.sound_enabled);
+        assert_eq!(config.sound.mute_sound_volume, 0.185);
+        assert_eq!(config.sound.unmute_sound_volume, 0.36);
+        assert!(config.system.autostart);
         assert_eq!(config.indicator.mute_inputs, "all");
     }
 

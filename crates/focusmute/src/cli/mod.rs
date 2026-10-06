@@ -479,8 +479,8 @@ mod json_output_tests {
         // Settings fields from Config (nested sub-structs)
         assert_eq!(parsed["settings"]["indicator"]["mute_color"], "#FF0000");
         assert_eq!(parsed["settings"]["keyboard"]["hotkey"], "Ctrl+Shift+M");
-        assert_eq!(parsed["settings"]["sound"]["sound_enabled"], true);
-        assert_eq!(parsed["settings"]["system"]["autostart"], false);
+        assert_eq!(parsed["settings"]["sound"]["sound_enabled"], false);
+        assert_eq!(parsed["settings"]["system"]["autostart"], true);
         assert_eq!(parsed["settings"]["indicator"]["mute_inputs"], "all");
 
         // Files section
