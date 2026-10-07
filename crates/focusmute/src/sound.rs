@@ -1,4 +1,5 @@
 //! Sound playback helpers for mute/unmute feedback.
+// Modified for the Scarlett Solo build; see README.md.
 //!
 //! Sounds are pre-decoded at load time into raw samples, so playback only
 //! needs to clone the sample buffer (no re-parsing on every mute toggle).
@@ -62,9 +63,9 @@ fn wait_for_drain(is_empty: impl Fn() -> bool, timeout: Duration) -> bool {
     true
 }
 
-/// Decode raw WAV bytes into a `DecodedSound`.
-fn decode_wav(wav_bytes: &[u8]) -> Option<DecodedSound> {
-    let decoder = Decoder::new(Cursor::new(wav_bytes.to_vec())).ok()?;
+/// Decode supported audio bytes into a `DecodedSound`.
+fn decode_audio(audio_bytes: &[u8]) -> Option<DecodedSound> {
+    let decoder = Decoder::new(Cursor::new(audio_bytes.to_vec())).ok()?;
     let channels = decoder.channels();
     let sample_rate = decoder.sample_rate();
     let samples: Vec<f32> = decoder.collect();
@@ -75,10 +76,10 @@ fn decode_wav(wav_bytes: &[u8]) -> Option<DecodedSound> {
     })
 }
 
-/// Load and decode sound from a custom path, falling back to built-in on any error.
+/// Load and decode WAV or MP3 sound from a custom path, falling back to built-in on any error.
 ///
 /// Returns `(decoded_sound, optional_warning)`. The warning is set when a custom
-/// path was specified but the file could not be loaded (missing, invalid WAV, etc.).
+/// path was specified but the file could not be loaded (missing, invalid or unsupported audio).
 pub(crate) fn load_sound_data(
     path: &str,
     fallback: &'static [u8],
@@ -86,18 +87,19 @@ pub(crate) fn load_sound_data(
     let path = path.trim();
     if path.is_empty() {
         return (
-            decode_wav(fallback).expect("embedded WAV must be valid"),
+            decode_audio(fallback).expect("embedded WAV must be valid"),
             None,
         );
     }
     match std::fs::read(path) {
-        Ok(data) => match decode_wav(&data) {
+        Ok(data) => match decode_audio(&data) {
             Some(decoded) => (decoded, None),
             None => {
-                let msg = format!("{path} is not a valid WAV file, using built-in");
+                let msg =
+                    format!("{path} is not a supported or valid WAV/MP3 file, using built-in");
                 log::warn!("[sound] {msg}");
                 (
-                    decode_wav(fallback).expect("embedded WAV must be valid"),
+                    decode_audio(fallback).expect("embedded WAV must be valid"),
                     Some(msg),
                 )
             }
@@ -106,7 +108,7 @@ pub(crate) fn load_sound_data(
             let msg = format!("could not read {path}: {e}, using built-in");
             log::warn!("[sound] {msg}");
             (
-                decode_wav(fallback).expect("embedded WAV must be valid"),
+                decode_audio(fallback).expect("embedded WAV must be valid"),
                 Some(msg),
             )
         }
@@ -173,7 +175,7 @@ mod tests {
 
     #[test]
     fn decode_builtin_muted_has_valid_metadata() {
-        let decoded = decode_wav(SOUND_MUTED).expect("should decode");
+        let decoded = decode_audio(SOUND_MUTED).expect("should decode");
         assert!(decoded.channels.get() > 0);
         assert!(decoded.sample_rate.get() > 0);
         assert!(!decoded.samples.is_empty());
@@ -181,7 +183,7 @@ mod tests {
 
     #[test]
     fn decode_builtin_unmuted_has_valid_metadata() {
-        let decoded = decode_wav(SOUND_UNMUTED).expect("should decode");
+        let decoded = decode_audio(SOUND_UNMUTED).expect("should decode");
         assert!(decoded.channels.get() > 0);
         assert!(decoded.sample_rate.get() > 0);
         assert!(!decoded.samples.is_empty());
@@ -189,7 +191,7 @@ mod tests {
 
     #[test]
     fn decode_invalid_wav_returns_none() {
-        assert!(decode_wav(b"this is not wav data").is_none());
+        assert!(decode_audio(b"this is not wav data").is_none());
     }
 
     #[test]
@@ -205,7 +207,7 @@ mod tests {
     #[test]
     fn builtin_sound_durations_are_sane() {
         for bytes in [SOUND_MUTED, SOUND_UNMUTED] {
-            let duration = decode_wav(bytes).unwrap().duration();
+            let duration = decode_audio(bytes).unwrap().duration();
             assert!(
                 duration > Duration::ZERO && duration < Duration::from_secs(5),
                 "unexpected builtin sound duration: {duration:?}"
@@ -241,7 +243,7 @@ mod tests {
     #[test]
     fn load_sound_data_empty_path_returns_decoded_builtin() {
         let (result, warning) = load_sound_data("", SOUND_MUTED);
-        let reference = decode_wav(SOUND_MUTED).unwrap();
+        let reference = decode_audio(SOUND_MUTED).unwrap();
         assert_eq!(result.channels, reference.channels);
         assert_eq!(result.sample_rate, reference.sample_rate);
         assert_eq!(result.samples.len(), reference.samples.len());
@@ -258,7 +260,7 @@ mod tests {
     #[test]
     fn load_sound_data_missing_file_returns_builtin() {
         let (result, warning) = load_sound_data("/nonexistent/path/sound.wav", SOUND_MUTED);
-        let reference = decode_wav(SOUND_MUTED).unwrap();
+        let reference = decode_audio(SOUND_MUTED).unwrap();
         assert_eq!(result.samples.len(), reference.samples.len());
         assert!(warning.is_some(), "should warn about missing file");
     }
@@ -271,7 +273,7 @@ mod tests {
         std::fs::write(&path, b"this is not a wav file").unwrap();
 
         let (result, warning) = load_sound_data(path.to_str().unwrap(), SOUND_MUTED);
-        let reference = decode_wav(SOUND_MUTED).unwrap();
+        let reference = decode_audio(SOUND_MUTED).unwrap();
         assert_eq!(result.samples.len(), reference.samples.len());
         assert!(warning.is_some(), "should warn about invalid WAV");
 
@@ -287,7 +289,7 @@ mod tests {
 
         let (result, warning) = load_sound_data(path.to_str().unwrap(), SOUND_UNMUTED);
         // Should decode to the muted sound data, not the unmuted fallback
-        let muted_ref = decode_wav(SOUND_MUTED).unwrap();
+        let muted_ref = decode_audio(SOUND_MUTED).unwrap();
         assert_eq!(result.samples.len(), muted_ref.samples.len());
         assert!(warning.is_none());
 

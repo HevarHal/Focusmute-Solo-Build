@@ -404,7 +404,7 @@ impl eframe::App for SettingsApp {
                                 self.mute_sound_path.clear();
                             }
                             if ui.button("Browse...").clicked()
-                                && let Some(path) = browse_wav_file()
+                                && let Some(path) = browse_sound_file()
                             {
                                 self.mute_sound_path = path;
                             }
@@ -431,7 +431,7 @@ impl eframe::App for SettingsApp {
                                 self.unmute_sound_path.clear();
                             }
                             if ui.button("Browse...").clicked()
-                                && let Some(path) = browse_wav_file()
+                                && let Some(path) = browse_sound_file()
                             {
                                 self.unmute_sound_path = path;
                             }
@@ -864,10 +864,10 @@ fn section_frame(ui: &mut egui::Ui, title: &str, add_contents: impl FnOnce(&mut 
         });
 }
 
-/// Show a native file dialog filtered to WAV files.
-fn browse_wav_file() -> Option<String> {
+/// Show a native file dialog filtered to WAV and MP3 files.
+fn browse_sound_file() -> Option<String> {
     rfd::FileDialog::new()
-        .add_filter("WAV", &["wav"])
+        .add_filter("Audio", &["wav", "mp3"])
         .pick_file()
         .and_then(|p| p.to_str().map(String::from))
 }

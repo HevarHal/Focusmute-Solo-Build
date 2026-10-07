@@ -8,6 +8,7 @@ This is a Solo-focused fork of [FocusMute](https://github.com/barnumbirr/focusmu
 - **Solo mute LEDs:** Both input number indicators follow the mute state. Active halo meter segments use the configured mute color while muted; FocusMute restores the original metering gradient on unmute. Halos remain meter-driven, so idle segments may be dark, and the gradient may also affect the output halo.
 - **Confirmed Solo map:** Input number LEDs are 4 and 12; halo segments are 5–11 and 13–19; Direct LED segments are 27 and 31. The map was confirmed on the project owner's device; other firmware/device combinations are unverified.
 - **Build defaults:** Sound feedback off, mute/unmute sound volumes 0.185/0.36, and start-on-login on.
+- **Custom sounds:** WAV and MP3 files are supported for mute and unmute feedback.
 
 ## Download
 

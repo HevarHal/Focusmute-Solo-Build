@@ -49,7 +49,7 @@ pub struct IndicatorConfig {
     /// Measured on a 2i2: quiet-room ambient reads single digits, speech
     /// peaks in the hundreds — the default sits well clear of both. The
     /// settings dialog exposes this as Low/Medium/High presets (500/250/100);
-    /// this key is the escape hatch for setups outside those.
+    /// this key is the escape hatch for setups outside those.-
     #[serde(default = "default_talk_threshold")]
     pub talk_threshold: u32,
 }
@@ -559,7 +559,7 @@ impl Config {
     }
 
     /// Validate a sound file path. Empty = built-in (always Ok).
-    /// Checks: file exists, .wav extension, size <= max_size_bytes.
+    /// Checks: file exists, .wav or .mp3 extension, size <= max_size_bytes.
     pub fn validate_sound_path(path: &str, max_size_bytes: u64) -> crate::error::Result<()> {
         let path = path.trim();
         if path.is_empty() {
@@ -572,10 +572,10 @@ impl Config {
             )));
         }
         match p.extension().and_then(|e| e.to_str()) {
-            Some(ext) if ext.eq_ignore_ascii_case("wav") => {}
+            Some(ext) if ext.eq_ignore_ascii_case("wav") || ext.eq_ignore_ascii_case("mp3") => {}
             _ => {
                 return Err(crate::FocusmuteError::Config(format!(
-                    "Not a .wav file: {path}"
+                    "Not a supported sound file (.wav or .mp3): {path}"
                 )));
             }
         }
@@ -1353,12 +1353,24 @@ on_unmute_command = "echo u"
 
     #[test]
     fn validate_sound_path_wrong_extension() {
-        // Create a temp file with a non-.wav extension
+        // Create a temp file with an unsupported extension.
         let dir = std::env::temp_dir();
-        let path = dir.join("focusmute_test_sound.mp3");
+        let path = dir.join("focusmute_test_sound.ogg");
         std::fs::write(&path, b"dummy").unwrap();
         let err = Config::validate_sound_path(path.to_str().unwrap(), 10_000_000).unwrap_err();
-        assert!(err.to_string().contains("Not a .wav"), "got: {err}");
+        assert!(
+            err.to_string().contains("Not a supported sound file"),
+            "got: {err}"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn validate_sound_path_valid_mp3() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("focusmute_test_valid.mp3");
+        std::fs::write(&path, b"dummy mp3 content").unwrap();
+        assert!(Config::validate_sound_path(path.to_str().unwrap(), 10_000_000).is_ok());
         let _ = std::fs::remove_file(&path);
     }
 
