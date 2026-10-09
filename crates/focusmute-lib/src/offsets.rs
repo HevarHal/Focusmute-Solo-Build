@@ -8,9 +8,10 @@
 
 use crate::protocol;
 use crate::schema::SchemaConstants;
+use serde::{Deserialize, Serialize};
 
 /// Firmware metering-color gradient descriptor details.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MeteringGradientOffsets {
     pub offset: u32,
     pub count: usize,

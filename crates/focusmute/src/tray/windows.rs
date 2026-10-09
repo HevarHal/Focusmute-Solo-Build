@@ -22,6 +22,7 @@ use crate::RUNNING;
 /// Set by the hidden window's WM_DEVICECHANGE handler when a Focusrite
 /// device interface is removed.  Checked (and cleared) by the main loop.
 static DEVICE_REMOVED: AtomicBool = AtomicBool::new(false);
+static SESSION_SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 // WM_DEVICECHANGE constants (not always exposed by the windows crate).
 const WM_DEVICECHANGE: u32 = 0x0219;
@@ -39,7 +40,7 @@ struct DevBroadcastDeviceInterface {
     dbcc_name: [u16; 1],
 }
 
-/// Window procedure for the hidden hotplug-notification window.
+/// Window procedure for the hidden device/session notification window.
 ///
 /// SAFETY: Called by the Windows message loop with valid parameters.
 /// Only touches a static `AtomicBool` (lock-free, no aliasing concerns).
@@ -49,14 +50,20 @@ unsafe extern "system" fn device_wndproc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    if msg == WM_QUERYENDSESSION {
+        return LRESULT(1);
+    }
+    if msg == WM_ENDSESSION {
+        SESSION_SHUTDOWN_REQUESTED.store(wparam.0 != 0, Ordering::SeqCst);
+    }
     if msg == WM_DEVICECHANGE && wparam.0 == DBT_DEVICEREMOVECOMPLETE {
         DEVICE_REMOVED.store(true, Ordering::SeqCst);
     }
     unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
 }
 
-/// Create a hidden message-only window and register it for Focusrite
-/// device-interface removal notifications.
+/// Create a hidden top-level window and register it for Focusrite device
+/// notifications and Windows session-end broadcasts.
 fn setup_device_notifications() {
     use std::mem;
 
@@ -73,7 +80,7 @@ fn setup_device_notifications() {
         return;
     }
 
-    // Create a message-only window (invisible, no taskbar entry).
+    // Create a hidden top-level window so it receives session-end broadcasts.
     let hwnd = unsafe {
         CreateWindowExW(
             WINDOW_EX_STYLE::default(),
@@ -84,7 +91,7 @@ fn setup_device_notifications() {
             0,
             0,
             0,
-            Some(HWND_MESSAGE), // message-only window
+            None, // hidden top-level window receives WM_QUERYENDSESSION
             None,
             None,
             None,
@@ -203,6 +210,10 @@ impl PlatformAdapter for WindowsAdapter {
 
     fn check_device_removed() -> bool {
         DEVICE_REMOVED.swap(false, Ordering::SeqCst)
+    }
+
+    fn shutdown_requested() -> bool {
+        SESSION_SHUTDOWN_REQUESTED.load(Ordering::SeqCst)
     }
 }
 

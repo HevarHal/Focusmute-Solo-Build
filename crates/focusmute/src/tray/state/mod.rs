@@ -159,10 +159,19 @@ impl TrayState {
         }
 
         let mut indicator = MuteIndicator::new(2, false, init_mute_color, strategy);
-        indicator.set_solo_direct_leds(
-            ctx.profile
-                .is_some_and(|profile| profile.name.eq_ignore_ascii_case("Scarlett Solo 4th Gen")),
-        );
+        let is_solo = ctx
+            .profile
+            .is_some_and(|profile| profile.name.eq_ignore_ascii_case("Scarlett Solo 4th Gen"));
+        indicator.set_solo_direct_leds(is_solo);
+        if is_solo {
+            let directory = Config::dir().ok_or_else(|| {
+                focusmute_lib::FocusmuteError::Config(
+                    "could not locate config directory for Solo LED recovery".into(),
+                )
+            })?;
+            indicator.set_solo_recovery_dir(&directory, device.info().serial.as_deref())?;
+            indicator.recover_solo_led_state(device)?;
+        }
 
         Ok(TrayState {
             config,
@@ -212,10 +221,20 @@ impl TrayState {
         }
 
         self.indicator.set_strategy(strategy);
-        self.indicator.set_solo_direct_leds(
-            ctx.profile
-                .is_some_and(|profile| profile.name.eq_ignore_ascii_case("Scarlett Solo 4th Gen")),
-        );
+        let is_solo = ctx
+            .profile
+            .is_some_and(|profile| profile.name.eq_ignore_ascii_case("Scarlett Solo 4th Gen"));
+        self.indicator.set_solo_direct_leds(is_solo);
+        if is_solo {
+            let directory = Config::dir().ok_or_else(|| {
+                focusmute_lib::FocusmuteError::Config(
+                    "could not locate config directory for Solo LED recovery".into(),
+                )
+            })?;
+            self.indicator
+                .set_solo_recovery_dir(&directory, device.info().serial.as_deref())?;
+            self.indicator.recover_solo_led_state(device)?;
+        }
         self.ctx = Some(ctx);
         Ok(warnings)
     }
@@ -395,7 +414,7 @@ impl TrayState {
 
     /// Restore LED state on exit.
     pub fn restore_on_exit(&self, device: &impl ScarlettDevice) {
-        if let Err(e) = self.indicator.clear_mute(device) {
+        if let Err(e) = self.indicator.restore_solo_led_state_on_exit(device) {
             log::warn!("[device] could not restore LED state: {e}");
         }
     }

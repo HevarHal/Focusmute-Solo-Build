@@ -113,6 +113,11 @@ pub trait PlatformAdapter {
     fn check_device_removed() -> bool {
         false
     }
+
+    /// Check whether the operating system is ending the session.
+    fn shutdown_requested() -> bool {
+        false
+    }
 }
 
 /// Shared tray event loop.
@@ -201,7 +206,6 @@ pub fn run_core<P: PlatformAdapter>() -> focusmute_lib::error::Result<()> {
             (TrayState::init_without_device(config), None)
         }
     };
-
     // Create audio monitor on the main thread
     let main_monitor: Option<Arc<P::Monitor>> = P::create_monitor().map(Arc::new);
 
@@ -338,6 +342,11 @@ pub fn run_core<P: PlatformAdapter>() -> focusmute_lib::error::Result<()> {
         // 1. Platform event pump — dispatches WM_DEVICECHANGE (among others)
         //    which sets the device-removed flag checked below.
         P::pump_events();
+        if P::shutdown_requested() {
+            log::info!("[focusmute] Windows session shutdown requested");
+            RUNNING.store(false, Ordering::SeqCst);
+            break;
+        }
 
         // 1b. Device removal detection (event-driven via RegisterDeviceNotification).
         if device.is_some() && P::check_device_removed() {
@@ -647,11 +656,9 @@ pub fn run_core<P: PlatformAdapter>() -> focusmute_lib::error::Result<()> {
     }
     drop(main_monitor);
 
-    // Only restore LEDs if we were muted (i.e. we actually changed them).
-    // Skipping when live avoids a spurious IOCTL that can fail during shutdown.
-    if state.indicator.is_muted()
-        && let Some(ref dev) = device
-    {
+    // Restore any saved Solo state even if shutdown interrupted a partial
+    // transition or the mute tracker already reports live.
+    if let Some(ref dev) = device {
         state.restore_on_exit(dev);
     }
     Ok(())
@@ -799,6 +806,10 @@ mod tests {
         };
         let mut indicator = MuteIndicator::new(2, false, 0xFF00_0000, strategy);
         indicator.set_solo_direct_leds(true);
+        let recovery_dir = tempfile::tempdir().unwrap();
+        indicator
+            .set_solo_recovery_dir(recovery_dir.path(), device.info().serial.as_deref())
+            .unwrap();
         let direct_state = Cell::new(Some(false));
         let mute_target = Cell::new(false);
 
